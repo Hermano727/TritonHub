@@ -8,10 +8,9 @@ import type { HubUser } from "@/types/hub-user";
 
 type HeaderProps = {
   user: HubUser | null;
-  onSyncCalendar?: () => void;
 };
 
-export function Header({ user, onSyncCalendar }: HeaderProps) {
+export function Header({ user }: HeaderProps) {
   return (
     <header className="glass-panel sticky top-0 z-30 flex h-14 shrink-0 items-center gap-4 border-b border-white/[0.08] px-4">
       <Link
@@ -45,14 +44,6 @@ export function Header({ user, onSyncCalendar }: HeaderProps) {
       </div>
 
       <div className="ml-auto flex items-center gap-2">
-        <button
-          type="button"
-          onClick={onSyncCalendar}
-          className="inline-flex h-9 items-center rounded-lg bg-hub-cyan/15 px-2.5 text-[11px] font-semibold text-hub-cyan ring-1 ring-hub-cyan/35 transition hover:bg-hub-cyan/25 sm:px-3 sm:text-xs"
-        >
-          <span className="sm:hidden">Sync</span>
-          <span className="hidden sm:inline">Sync to Google Calendar</span>
-        </button>
         <button
           type="button"
           className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-white/[0.08] text-hub-text-secondary transition hover:border-white/[0.14] hover:text-hub-text"

@@ -6,9 +6,7 @@ import { ChevronRight } from "lucide-react";
 import { RightSidebar } from "@/components/layout/RightSidebar";
 import { IngestionHub } from "@/components/ingestion/IngestionHub";
 import { ProcessingModal } from "@/components/modals/ProcessingModal";
-import { ClassCard } from "@/components/dashboard/ClassCard";
-import { EvaluatorFooter } from "@/components/dashboard/EvaluatorFooter";
-import { WeeklyCalendar } from "@/components/dashboard/WeeklyCalendar";
+import { DossierScheduleWorkspace } from "@/components/dashboard/DossierScheduleWorkspace";
 import { mockDossier } from "@/lib/mock/dossier";
 import { createClient } from "@/lib/supabase/client";
 import {
@@ -297,10 +295,6 @@ export function CommandCenter() {
     [runIngestionFlow],
   );
 
-  const handleMeetingChange = useCallback((updated: ClassDossier[]) => {
-    setClasses(updated);
-  }, []);
-
   const handleManualSubmit = useCallback(
     (_payload: {
       professor: string;
@@ -353,9 +347,15 @@ export function CommandCenter() {
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="flex min-h-0 flex-1">
-        <main className="relative min-w-0 flex-1 overflow-y-auto px-4 py-4 pb-10 lg:px-6">
+        <main
+          className={`relative min-w-0 flex-1 overflow-y-auto py-4 pb-10 ${
+            phase === "dashboard"
+              ? "px-4 lg:pl-3 lg:pr-8"
+              : "px-4 lg:px-6"
+          }`}
+        >
           <div
-            className={`mx-auto max-w-4xl ${phase === "processing" ? "pointer-events-none blur-[2px]" : ""}`}
+            className={`mx-auto w-full ${phase === "dashboard" ? "max-w-[min(100%,1760px)]" : "max-w-4xl"} ${phase === "processing" ? "pointer-events-none blur-[2px]" : ""}`}
           >
             <nav
               className="mb-4 flex flex-wrap items-center gap-1 text-xs text-hub-text-muted"
@@ -394,18 +394,18 @@ export function CommandCenter() {
                   transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
                   className="space-y-4"
                 >
-                  <WeeklyCalendar classes={viewClasses} onMeetingChange={handleMeetingChange} />
                   {viewClasses.length === 0 ? (
                     <p className="rounded-xl border border-white/[0.08] bg-hub-bg/40 px-4 py-8 text-center text-sm text-hub-text-muted">
                       No dossier data for this plan yet. Run ingestion above or
                       pick another saved plan.
                     </p>
                   ) : (
-                    viewClasses.map((c) => (
-                      <ClassCard key={c.id} dossier={c} />
-                    ))
+                    <DossierScheduleWorkspace
+                      viewClasses={viewClasses}
+                      evaluation={viewEvaluation}
+                      hydrateKey={`${activePlanId}:${authed}`}
+                    />
                   )}
-                  <EvaluatorFooter evaluation={viewEvaluation} />
                   <p className="pt-2 text-center text-[11px] text-hub-text-muted">
                     <button
                       type="button"

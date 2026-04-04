@@ -40,6 +40,18 @@ export interface SectionMeeting {
   location: string;
 }
 
+/** User-defined block on the weekly grid (work, club, etc.) */
+export interface ScheduleCommitment {
+  id: string;
+  title: string;
+  /** CSS color (e.g. hex) for border/background tint */
+  color: string;
+  /** 0 = Mon … 4 = Fri */
+  dayCol: number;
+  startMin: number;
+  endMin: number;
+}
+
 export interface ClassDossier {
   id: string;
   courseCode: string;

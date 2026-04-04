@@ -11,6 +11,8 @@ import {
   Sparkles,
 } from "lucide-react";
 import { SignOutButton } from "@/components/auth/SignOutButton";
+import { initialsFromName } from "@/lib/hub/initials";
+import { vaultKindLabel } from "@/lib/hub/vault-map";
 import type { VaultItem } from "@/types/dossier";
 
 export type ProfilePlan = {
