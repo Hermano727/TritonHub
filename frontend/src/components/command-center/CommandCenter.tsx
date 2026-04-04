@@ -297,6 +297,10 @@ export function CommandCenter() {
     [runIngestionFlow],
   );
 
+  const handleMeetingChange = useCallback((updated: ClassDossier[]) => {
+    setClasses(updated);
+  }, []);
+
   const handleManualSubmit = useCallback(
     (_payload: {
       professor: string;
@@ -390,7 +394,7 @@ export function CommandCenter() {
                   transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
                   className="space-y-4"
                 >
-                  <WeeklyCalendar classes={viewClasses} />
+                  <WeeklyCalendar classes={viewClasses} onMeetingChange={handleMeetingChange} />
                   {viewClasses.length === 0 ? (
                     <p className="rounded-xl border border-white/[0.08] bg-hub-bg/40 px-4 py-8 text-center text-sm text-hub-text-muted">
                       No dossier data for this plan yet. Run ingestion above or
