@@ -94,6 +94,10 @@ export function CommandCenter() {
     [startProcessing, finishProcessing],
   );
 
+  const handleMeetingChange = useCallback((updated: ClassDossier[]) => {
+    setClasses(updated);
+  }, []);
+
   const handleManualSubmit = useCallback(() => {
     if (!startProcessing()) return;
     const script = mockDossier.terminalScript;
@@ -158,7 +162,7 @@ export function CommandCenter() {
                   transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
                   className="space-y-4"
                 >
-                  <WeeklyCalendar classes={classes} />
+                  <WeeklyCalendar classes={classes} onMeetingChange={handleMeetingChange} />
                   {classes.map((c) => (
                     <ClassCard key={c.id} dossier={c} />
                   ))}

@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import type { ClassDossier, SectionMeeting } from "@/types/dossier";
 
 const PX_PER_HOUR = 64;
@@ -45,10 +46,6 @@ function parseTimeToMinutes(t: string): number {
 }
 
 function parseDaysToCols(days: string): number[] {
-  // Map each token to column index (M=0, Tu=1, W=2, Th=3, F=4, Sa=5)
-  const map: Record<string, number> = {
-    M: 0, Tu: 1, W: 2, Th: 3, F: 4, Sa: 5,
-  };
   const cols: number[] = [];
   // Parse in order: Tu, Th before T, Sa before S
   let i = 0;
@@ -64,6 +61,23 @@ function parseDaysToCols(days: string): number[] {
   return cols;
 }
 
+const COL_TO_DAY: Record<number, string> = {
+  0: "M", 1: "Tu", 2: "W", 3: "Th", 4: "F",
+};
+
+function minutesToTimeStr(min: number): string {
+  const h = Math.floor(min / 60);
+  const m = min % 60;
+  const period = h < 12 ? "AM" : "PM";
+  const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h;
+  return `${h12}:${String(m).padStart(2, "0")} ${period}`;
+}
+
+function removeDayFromString(days: string, colToRemove: number): string {
+  const remaining = parseDaysToCols(days).filter((c) => c !== colToRemove);
+  return remaining.map((c) => COL_TO_DAY[c]).join("");
+}
+
 interface MeetingBlock {
   meeting: SectionMeeting;
   color: typeof PALETTE[number];
@@ -71,27 +85,46 @@ interface MeetingBlock {
   col: number;
   startMin: number;
   endMin: number;
+  dossierId: string;
+  meetingIdx: number;
+  blockKey: string;
 }
 
 interface Props {
   classes: ClassDossier[];
+  onMeetingChange: (updated: ClassDossier[]) => void;
 }
 
-export function WeeklyCalendar({ classes }: Props) {
+export function WeeklyCalendar({ classes, onMeetingChange }: Props) {
+  const [dragKey, setDragKey] = useState<string | null>(null);
+  const [dropPreview, setDropPreview] = useState<{
+    col: number; top: number; height: number;
+  } | null>(null);
+
   // Collect all blocks
   const blocks: MeetingBlock[] = [];
   let allStart = Infinity;
   let allEnd = -Infinity;
 
-  classes.forEach((dossier, idx) => {
-    const color = PALETTE[idx % PALETTE.length];
-    dossier.meetings.forEach((meeting) => {
+  classes.forEach((dossier, _idx) => {
+    const color = PALETTE[_idx % PALETTE.length];
+    dossier.meetings.forEach((meeting, meetingIdx) => {
       const startMin = parseTimeToMinutes(meeting.start_time);
       const endMin = parseTimeToMinutes(meeting.end_time);
       if (startMin < allStart) allStart = startMin;
       if (endMin > allEnd) allEnd = endMin;
       parseDaysToCols(meeting.days).forEach((col) => {
-        blocks.push({ meeting, color, courseCode: dossier.courseCode, col, startMin, endMin });
+        blocks.push({
+          meeting,
+          color,
+          courseCode: dossier.courseCode,
+          col,
+          startMin,
+          endMin,
+          dossierId: dossier.id,
+          meetingIdx,
+          blockKey: `${dossier.id}:${meetingIdx}:${col}`,
+        });
       });
     });
   });
@@ -107,6 +140,85 @@ export function WeeklyCalendar({ classes }: Props) {
 
   const hourLabels: number[] = [];
   for (let h = rangeStart / 60; h <= rangeEnd / 60; h++) hourLabels.push(h);
+
+  function handleDragStart(e: React.DragEvent, blockKey: string) {
+    e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.setData("text/plain", blockKey);
+    setDragKey(blockKey);
+  }
+
+  function handleDragEnd() {
+    setDragKey(null);
+    setDropPreview(null);
+  }
+
+  function handleDragOver(e: React.DragEvent, colIdx: number) {
+    e.preventDefault();
+    if (!dragKey) return;
+    const block = blocks.find((b) => b.blockKey === dragKey);
+    if (!block) return;
+    const duration = block.endMin - block.startMin;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const snappedMin = Math.round((e.clientY - rect.top) / PX_PER_MIN / 15) * 15;
+    const newStartMin = Math.max(rangeStart, Math.min(rangeEnd - duration, rangeStart + snappedMin));
+    setDropPreview({
+      col: colIdx,
+      top: (newStartMin - rangeStart) * PX_PER_MIN,
+      height: duration * PX_PER_MIN,
+    });
+  }
+
+  function handleDragLeave() { setDropPreview(null); }
+
+  function handleDrop(e: React.DragEvent, colIdx: number) {
+    e.preventDefault();
+    const blockKey = e.dataTransfer.getData("text/plain");
+    const block = blocks.find((b) => b.blockKey === blockKey);
+    if (!block) { setDropPreview(null); return; }
+
+    const duration = block.endMin - block.startMin;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const snappedMin = Math.round((e.clientY - rect.top) / PX_PER_MIN / 15) * 15;
+    const newStartMin = Math.max(rangeStart, Math.min(rangeEnd - duration, rangeStart + snappedMin));
+    const newEndMin = newStartMin + duration;
+
+    // No-op if nothing changed
+    if (newStartMin === block.startMin && colIdx === block.col) {
+      setDropPreview(null); return;
+    }
+
+    const newDayToken = COL_TO_DAY[colIdx];
+    const updatedClasses = classes.map((d) => {
+      if (d.id !== block.dossierId) return d;
+      const meetings = [...d.meetings];
+      const orig = meetings[block.meetingIdx];
+      const origCols = parseDaysToCols(orig.days);
+
+      const updatedMeeting: SectionMeeting = {
+        ...orig,
+        days: newDayToken,
+        start_time: minutesToTimeStr(newStartMin),
+        end_time: minutesToTimeStr(newEndMin),
+      };
+
+      if (origCols.length === 1) {
+        // Single-day: update in place
+        meetings[block.meetingIdx] = updatedMeeting;
+      } else {
+        // Multi-day: remove this day from original, append new single-day meeting
+        meetings[block.meetingIdx] = {
+          ...orig,
+          days: removeDayFromString(orig.days, block.col),
+        };
+        meetings.push(updatedMeeting);
+      }
+      return { ...d, meetings };
+    });
+
+    onMeetingChange(updatedClasses);
+    setDropPreview(null);
+    setDragKey(null);
+  }
 
   return (
     <div className="rounded-xl border border-white/[0.08] bg-hub-surface/90 p-4 backdrop-blur-sm">
@@ -149,6 +261,9 @@ export function WeeklyCalendar({ classes }: Props) {
                 key={colIdx}
                 className="relative flex-1 border-l border-white/[0.06]"
                 style={{ height: totalHeight }}
+                onDragOver={(e) => handleDragOver(e, colIdx)}
+                onDragLeave={handleDragLeave}
+                onDrop={(e) => handleDrop(e, colIdx)}
               >
                 {/* Hour grid lines */}
                 {hourLabels.map((h) => (
@@ -159,16 +274,28 @@ export function WeeklyCalendar({ classes }: Props) {
                   />
                 ))}
 
+                {/* Drop preview */}
+                {dropPreview?.col === colIdx && (
+                  <div
+                    className="pointer-events-none absolute inset-x-0.5 rounded border border-white/30 bg-white/10"
+                    style={{ top: dropPreview.top, height: dropPreview.height }}
+                  />
+                )}
+
                 {/* Meeting blocks */}
                 {blocks
                   .filter((b) => b.col === colIdx)
-                  .map((b, i) => {
+                  .map((b) => {
                     const top = (b.startMin - rangeStart) * PX_PER_MIN;
                     const height = Math.max((b.endMin - b.startMin) * PX_PER_MIN, 20);
                     return (
                       <div
-                        key={i}
-                        className={`absolute inset-x-0.5 overflow-hidden rounded border ${b.color.border} ${b.color.bg} px-1 py-0.5`}
+                        key={b.blockKey}
+                        draggable
+                        onDragStart={(e) => handleDragStart(e, b.blockKey)}
+                        onDragEnd={handleDragEnd}
+                        className={`absolute inset-x-0.5 overflow-hidden rounded border ${b.color.border} ${b.color.bg} px-1 py-0.5
+                          ${dragKey === b.blockKey ? "opacity-40 cursor-grabbing" : "cursor-grab"}`}
                         style={{ top, height }}
                       >
                         <p className={`truncate text-[10px] font-bold leading-tight ${b.color.text}`}>
