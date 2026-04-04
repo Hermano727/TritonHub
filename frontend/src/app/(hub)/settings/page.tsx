@@ -1,7 +1,15 @@
+import Link from "next/link";
+import { SignOutButton } from "@/components/auth/SignOutButton";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { Alert } from "@/components/ui/Alert";
+
+const linkGhost =
+  "inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-white/[0.08] px-4 text-sm font-semibold text-hub-text-secondary transition hover:border-white/[0.14] hover:text-hub-text outline-none ring-hub-cyan/40 focus-visible:ring-2";
+const linkPrimary =
+  "inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-hub-cyan/15 px-4 text-sm font-semibold text-hub-cyan ring-1 ring-hub-cyan/35 transition hover:bg-hub-cyan/25 outline-none focus-visible:ring-2 focus-visible:ring-hub-cyan/50";
+import { createClient } from "@/lib/supabase/server";
 
 function ToggleRow({
   id,
@@ -17,7 +25,7 @@ function ToggleRow({
       <div className="min-w-0">
         <label
           htmlFor={id}
-          className="font-medium text-hub-text cursor-pointer"
+          className="cursor-pointer font-medium text-hub-text"
         >
           {label}
         </label>
@@ -36,7 +44,12 @@ function ToggleRow({
   );
 }
 
-export default function SettingsPage() {
+export default async function SettingsPage() {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
   return (
     <main className="relative mx-auto min-h-0 w-full max-w-3xl flex-1 overflow-y-auto px-4 py-8 pb-12 lg:px-6">
       <PageHeader
@@ -45,6 +58,29 @@ export default function SettingsPage() {
       />
 
       <div className="space-y-6">
+        {user ? (
+          <Card
+            title="Session"
+            description="Sign out on this device. You’ll need to sign in again to sync plans and vault."
+          >
+            <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
+              <SignOutButton redirectTo="/login" variant="danger" />
+              <Link href="/profile" className={linkGhost}>
+                My profile
+              </Link>
+            </div>
+          </Card>
+        ) : (
+          <Card
+            title="Session"
+            description="You’re browsing as a guest."
+          >
+            <Link href="/login?next=/settings" className={linkPrimary}>
+              Sign in
+            </Link>
+          </Card>
+        )}
+
         <Card
           title="Notifications"
           description="Email and in-app alerts for ingest completion and calendar conflicts."
