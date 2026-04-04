@@ -4,12 +4,14 @@ import Link from "next/link";
 import { Bell, HelpCircle, Search } from "lucide-react";
 import { UserAccountMenu } from "@/components/layout/UserAccountMenu";
 import { TritonMark } from "@/components/ui/TritonMark";
+import type { HubUser } from "@/types/hub-user";
 
 type HeaderProps = {
+  user: HubUser | null;
   onSyncCalendar?: () => void;
 };
 
-export function Header({ onSyncCalendar }: HeaderProps) {
+export function Header({ user, onSyncCalendar }: HeaderProps) {
   return (
     <header className="glass-panel sticky top-0 z-30 flex h-14 shrink-0 items-center gap-4 border-b border-white/[0.08] px-4">
       <Link
@@ -66,7 +68,11 @@ export function Header({ onSyncCalendar }: HeaderProps) {
           <Bell className="h-4 w-4" />
           <span className="absolute right-1.5 top-1.5 h-1.5 w-1.5 rounded-full bg-hub-cyan shadow-[0_0_8px_rgba(0,212,255,0.8)]" />
         </button>
-        <UserAccountMenu />
+        <UserAccountMenu
+          displayName={user?.displayName}
+          email={user?.email}
+          signedIn={!!user}
+        />
       </div>
     </header>
   );

@@ -2,11 +2,14 @@
 
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { ChevronDown, LogOut, Settings, User } from "lucide-react";
+import { createClient } from "@/lib/supabase/client";
 
 type UserAccountMenuProps = {
   displayName?: string;
   email?: string;
+  signedIn?: boolean;
 };
 
 const menuItemClass =
@@ -15,7 +18,9 @@ const menuItemClass =
 export function UserAccountMenu({
   displayName = "Guest",
   email = "Sign in when auth is wired",
+  signedIn = false,
 }: UserAccountMenuProps) {
+  const router = useRouter();
   const initials =
     displayName
       .split(/\s+/)
@@ -23,6 +28,13 @@ export function UserAccountMenu({
       .slice(0, 2)
       .map((w) => w[0]?.toUpperCase() ?? "")
       .join("") || "?";
+
+  async function handleSignOut() {
+    const supabase = createClient();
+    await supabase.auth.signOut();
+    router.refresh();
+    router.push("/login");
+  }
 
   return (
     <DropdownMenu.Root>
@@ -53,33 +65,49 @@ export function UserAccountMenu({
           </div>
 
           <div className="py-1">
-            <DropdownMenu.Item asChild className={menuItemClass}>
-              <Link href="/profile">
-                <User className="h-4 w-4 text-hub-text-muted" aria-hidden />
-                My profile
-              </Link>
-            </DropdownMenu.Item>
-            <DropdownMenu.Item asChild className={menuItemClass}>
-              <Link href="/settings">
-                <Settings className="h-4 w-4 text-hub-text-muted" aria-hidden />
-                Settings
-              </Link>
-            </DropdownMenu.Item>
+            {!signedIn ? (
+              <DropdownMenu.Item asChild className={menuItemClass}>
+                <Link href="/login">
+                  <User className="h-4 w-4 text-hub-text-muted" aria-hidden />
+                  Sign in
+                </Link>
+              </DropdownMenu.Item>
+            ) : (
+              <>
+                <DropdownMenu.Item asChild className={menuItemClass}>
+                  <Link href="/profile">
+                    <User className="h-4 w-4 text-hub-text-muted" aria-hidden />
+                    My profile
+                  </Link>
+                </DropdownMenu.Item>
+                <DropdownMenu.Item asChild className={menuItemClass}>
+                  <Link href="/settings">
+                    <Settings
+                      className="h-4 w-4 text-hub-text-muted"
+                      aria-hidden
+                    />
+                    Settings
+                  </Link>
+                </DropdownMenu.Item>
+              </>
+            )}
           </div>
 
-          <DropdownMenu.Separator className="my-1 h-px bg-white/[0.08]" />
-
-          <DropdownMenu.Item
-            className={menuItemClass}
-            disabled
-            title="Available after Supabase auth"
-          >
-            <LogOut className="h-4 w-4 text-hub-text-muted" aria-hidden />
-            Sign out
-            <span className="ml-auto text-[10px] font-medium uppercase tracking-wide text-hub-text-muted">
-              Soon
-            </span>
-          </DropdownMenu.Item>
+          {signedIn ? (
+            <>
+              <DropdownMenu.Separator className="my-1 h-px bg-white/[0.08]" />
+              <DropdownMenu.Item
+                className={menuItemClass}
+                onSelect={(e) => {
+                  e.preventDefault();
+                  void handleSignOut();
+                }}
+              >
+                <LogOut className="h-4 w-4 text-hub-text-muted" aria-hidden />
+                Sign out
+              </DropdownMenu.Item>
+            </>
+          ) : null}
         </DropdownMenu.Content>
       </DropdownMenu.Portal>
     </DropdownMenu.Root>
