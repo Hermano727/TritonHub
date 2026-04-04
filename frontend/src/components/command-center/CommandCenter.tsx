@@ -9,7 +9,9 @@ import { ProcessingModal } from "@/components/modals/ProcessingModal";
 import { ClassCard } from "@/components/dashboard/ClassCard";
 import { EvaluatorFooter } from "@/components/dashboard/EvaluatorFooter";
 import { mockDossier } from "@/lib/mock/dossier";
-import type { UiPhase } from "@/types/dossier";
+import { parseScreenshot } from "@/lib/api/parse";
+import { courseEntryToDossier } from "@/lib/mappers/courseEntryToDossier";
+import type { ClassDossier, UiPhase } from "@/types/dossier";
 
 const LINE_MS = 360;
 const FINISH_PAD_MS = 650;
@@ -17,6 +19,7 @@ const FINISH_PAD_MS = 650;
 export function CommandCenter() {
   const [phase, setPhase] = useState<UiPhase>("idle");
   const [ingestionCollapsed, setIngestionCollapsed] = useState(false);
+  const [classes, setClasses] = useState<ClassDossier[]>(mockDossier.classes);
   const [activeQuarterId, setActiveQuarterId] = useState(
     mockDossier.activeQuarterId,
   );
@@ -36,7 +39,7 @@ export function CommandCenter() {
     "Spring 2026";
 
   const startProcessing = useCallback(() => {
-    if (processingLockRef.current) return;
+    if (processingLockRef.current) return false;
     processingLockRef.current = true;
     clearRun();
     setPhase("processing");
@@ -48,22 +51,56 @@ export function CommandCenter() {
       }, idx * LINE_MS);
       timeoutsRef.current.push(id);
     });
-    const doneId = window.setTimeout(() => {
-      setPhase("dashboard");
-      setIngestionCollapsed(true);
-      processingLockRef.current = false;
-      clearRun();
-    }, script.length * LINE_MS + FINISH_PAD_MS);
-    timeoutsRef.current.push(doneId);
+    return true;
   }, [clearRun]);
 
-  const handleFilesSelected = useCallback(() => {
-    startProcessing();
-  }, [startProcessing]);
+  const finishProcessing = useCallback(() => {
+    setPhase("dashboard");
+    setIngestionCollapsed(true);
+    processingLockRef.current = false;
+    clearRun();
+  }, [clearRun]);
+
+  const handleFilesSelected = useCallback(
+    async (files: FileList | File[]) => {
+      const imageFile = Array.from(files).find((f) =>
+        f.type.startsWith("image/"),
+      );
+
+      if (!imageFile) {
+        // Non-image drop — fall back to mock flow with timer
+        if (!startProcessing()) return;
+        const script = mockDossier.terminalScript;
+        const doneId = window.setTimeout(() => {
+          finishProcessing();
+        }, script.length * LINE_MS + FINISH_PAD_MS);
+        timeoutsRef.current.push(doneId);
+        return;
+      }
+
+      if (!startProcessing()) return;
+
+      try {
+        const response = await parseScreenshot(imageFile);
+        const parsed = response.courses.map(courseEntryToDossier);
+        setClasses(parsed.length > 0 ? parsed : mockDossier.classes);
+      } catch {
+        // keep mock classes on error
+      }
+
+      finishProcessing();
+    },
+    [startProcessing, finishProcessing],
+  );
 
   const handleManualSubmit = useCallback(() => {
-    startProcessing();
-  }, [startProcessing]);
+    if (!startProcessing()) return;
+    const script = mockDossier.terminalScript;
+    const doneId = window.setTimeout(() => {
+      finishProcessing();
+    }, script.length * LINE_MS + FINISH_PAD_MS);
+    timeoutsRef.current.push(doneId);
+  }, [startProcessing, finishProcessing]);
 
   const resetDemo = useCallback(() => {
     clearRun();
@@ -71,6 +108,7 @@ export function CommandCenter() {
     setPhase("idle");
     setIngestionCollapsed(false);
     setTerminalLines([]);
+    setClasses(mockDossier.classes);
   }, [clearRun]);
 
   return (
@@ -105,7 +143,7 @@ export function CommandCenter() {
               }
               onFilesSelected={handleFilesSelected}
               onManualSubmit={handleManualSubmit}
-              classCount={mockDossier.classes.length}
+              classCount={classes.length}
               quarterLabel={quarterLabel}
             />
 
@@ -119,7 +157,7 @@ export function CommandCenter() {
                   transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
                   className="space-y-4"
                 >
-                  {mockDossier.classes.map((c) => (
+                  {classes.map((c) => (
                     <ClassCard key={c.id} dossier={c} />
                   ))}
                   <EvaluatorFooter evaluation={mockDossier.evaluation} />
