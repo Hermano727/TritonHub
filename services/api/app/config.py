@@ -12,6 +12,12 @@ class Settings(BaseSettings):
     supabase_jwt_secret: str
     gemini_api_key: str
 
+    # Google Calendar OAuth (optional — omit to disable the integration)
+    google_client_id: str = ""
+    google_client_secret: str = ""
+    google_redirect_uri: str = "http://127.0.0.1:8000/api/calendar/callback"
+    frontend_origin: str = "http://localhost:3000"
+
     model_config = {
         "env_file": ".env",
         "env_file_encoding": "utf-8",

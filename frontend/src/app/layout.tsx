@@ -24,7 +24,7 @@ const jetbrainsMono = JetBrains_Mono({
 export const metadata: Metadata = {
   title: "TritonHub — Command Center",
   description:
-    "UCSD academic command center: schedule ingestion, dossiers, and schedule fitness.",
+    "UCSD academic schedule planner: upload your WebReg schedule, explore course evaluations, and plan your quarter.",
 };
 
 export default function RootLayout({
