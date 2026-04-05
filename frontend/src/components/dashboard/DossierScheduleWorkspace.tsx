@@ -59,6 +59,7 @@ type Props = {
   hydrateKey: string;
   scheduleItems?: ScheduleItem[];
   transitionInsights?: TransitionInsight[];
+  calendarHeaderActions?: ReactNode;
 };
 
 export function DossierScheduleWorkspace({
@@ -67,6 +68,7 @@ export function DossierScheduleWorkspace({
   hydrateKey,
   scheduleItems = [],
   transitionInsights = [],
+  calendarHeaderActions,
 }: Props) {
   const fingerprint = useScheduleFingerprint(viewClasses);
   const fullKey = `${hydrateKey}|${fingerprint}`;
@@ -314,7 +316,7 @@ export function DossierScheduleWorkspace({
     ],
   );
 
-  const calendarHeaderActions = useMemo(
+  const defaultCalendarHeaderActions = useMemo(
     () => (
       <>
         <button
@@ -437,7 +439,7 @@ export function DossierScheduleWorkspace({
           ref={calendarRef}
           className={mainTab === "dossier" ? "hidden lg:block" : ""}
         >
-          {calendarNode(78, calendarHeaderActions)}
+          {calendarNode(78, calendarHeaderActions ?? defaultCalendarHeaderActions)}
         </div>
 
         {/* Dossier cards below */}

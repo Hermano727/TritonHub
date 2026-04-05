@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { ChevronRight } from "lucide-react";
 import { RightSidebar } from "@/components/layout/RightSidebar";
@@ -33,6 +33,7 @@ export function CommandCenter() {
   const [authed, setAuthed] = useState(false);
   const [remotePlans, setRemotePlans] = useState<SavedPlanRow[]>([]);
   const [remoteVault, setRemoteVault] = useState<VaultItemRow[]>([]);
+  const [saveMenuOpen, setSaveMenuOpen] = useState(false);
   const timeoutsRef = useRef<number[]>([]);
   const processingLockRef = useRef(false);
   const activePlanIdRef = useRef(activePlanId);
@@ -227,6 +228,96 @@ export function CommandCenter() {
     }
   }, []);
 
+  const handleSaveOverwrite = useCallback(async () => {
+    try {
+      const supabase = createClient();
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user) return;
+
+      const pid = activePlanIdRef.current;
+      const activeQ =
+        !authedRef.current &&
+        mockDossier.quarters.some((q) => q.id === pid)
+          ? pid
+          : mockDossier.activeQuarterId;
+
+      const payload = buildPayloadFromClasses(activeQ, viewClasses, viewEvaluation);
+
+      if (!pid) {
+        const titleSuffix = new Date().toLocaleDateString(undefined, {
+          month: "short",
+          day: "numeric",
+        });
+        const title = `${mockDossier.quarters.find((q) => q.id === activeQ)?.label ?? "Schedule"} · ${titleSuffix}`;
+        const { data } = await supabase
+          .from("saved_plans")
+          .insert({
+            user_id: user.id,
+            title,
+            quarter_label: mockDossier.quarters.find((q) => q.id === activeQ)?.label ?? "",
+            status: "draft",
+            payload_version: 1,
+            payload,
+          })
+          .select("id")
+          .single();
+        if (data?.id) setActivePlanId(data.id as string);
+      } else {
+        await supabase.from("saved_plans").update({
+          payload,
+          payload_version: 1,
+        }).eq("id", pid);
+      }
+      await loadHubData();
+    } catch {
+      /* ignore save errors */
+    }
+  }, [viewClasses, viewEvaluation, loadHubData]);
+
+  const handleSaveAsNew = useCallback(async () => {
+    try {
+      const supabase = createClient();
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user) return;
+
+      const pid = activePlanIdRef.current;
+      const activeQ =
+        !authedRef.current &&
+        mockDossier.quarters.some((q) => q.id === pid)
+          ? pid
+          : mockDossier.activeQuarterId;
+
+      const payload = buildPayloadFromClasses(activeQ, viewClasses, viewEvaluation);
+
+      const titleSuffix = new Date().toLocaleDateString(undefined, {
+        month: "short",
+        day: "numeric",
+      });
+      const title = `${mockDossier.quarters.find((q) => q.id === activeQ)?.label ?? "Schedule"} · ${titleSuffix}`;
+
+      const { data } = await supabase
+        .from("saved_plans")
+        .insert({
+          user_id: user.id,
+          title,
+          quarter_label: mockDossier.quarters.find((q) => q.id === activeQ)?.label ?? "",
+          status: "draft",
+          payload_version: 1,
+          payload,
+        })
+        .select("id")
+        .single();
+      if (data?.id) setActivePlanId(data.id as string);
+      await loadHubData();
+    } catch {
+      /* ignore save errors */
+    }
+  }, [viewClasses, viewEvaluation, loadHubData]);
+
   const runIngestionFlow = useCallback(
     async (imageFile: File | undefined) => {
       if (processingLockRef.current) return;
@@ -250,7 +341,9 @@ export function CommandCenter() {
       let nextEvaluation: ScheduleEvaluation = mockDossier.evaluation;
       if (imageFile?.type.startsWith("image/")) {
         try {
+          console.debug("runIngestionFlow: calling researchScreenshot with file:", imageFile?.name, imageFile?.type);
           const response = await researchScreenshot(imageFile);
+          console.debug("runIngestionFlow: researchScreenshot response:", response);
           const parsed = response.results.map(courseResearchResultToDossier);
           if (parsed.length > 0) nextClasses = parsed;
 
@@ -275,8 +368,11 @@ export function CommandCenter() {
               recommendation: fitResult.recommendation,
             };
           }
-        } catch {
-          /* keep mock dossier */
+        } catch (err) {
+          // Keep mock dossier on error, but surface the error to the dev console for debugging
+          // (we avoid changing UX flow here; this is purely diagnostic)
+          // eslint-disable-next-line no-console
+          console.error("runIngestionFlow: researchScreenshot failed:", err);
         }
       }
 
@@ -314,9 +410,13 @@ export function CommandCenter() {
 
   const handleFilesSelected = useCallback(
     (files: FileList | File[]) => {
-      const imageFile = Array.from(files).find((f) =>
-        f.type.startsWith("image/"),
-      );
+      // Log received files for debugging why mock data might be used
+      // eslint-disable-next-line no-console
+      console.debug("handleFilesSelected: files:", files);
+
+      const imageFile = Array.from(files).find((f) => f.type.startsWith("image/"));
+      // eslint-disable-next-line no-console
+      console.debug("handleFilesSelected: selected imageFile:", imageFile?.name, imageFile?.type);
       void runIngestionFlow(imageFile);
     },
     [runIngestionFlow],
@@ -371,6 +471,18 @@ export function CommandCenter() {
       /* ignore */
     }
   }, [authed, loadHubData, resetDemo]);
+
+  const handleDeletePlan = useCallback(async (id: string) => {
+    if (!authed) return;
+    try {
+      const supabase = createClient();
+      await supabase.from("saved_plans").delete().eq("id", id);
+      await loadHubData();
+      if (activePlanIdRef.current === id) setActivePlanId("");
+    } catch {
+      /* ignore delete errors */
+    }
+  }, [authed, loadHubData]);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -433,6 +545,46 @@ export function CommandCenter() {
                       hydrateKey={`${activePlanId}:${authed}`}
                       scheduleItems={mockDossier.scheduleItems}
                       transitionInsights={mockDossier.transitionInsights}
+                      calendarHeaderActions={(
+                        <>
+                          <div className="flex items-center gap-2">
+                            <div className="relative">
+                              <button
+                                type="button"
+                                onClick={() => setSaveMenuOpen((s) => !s)}
+                                className="inline-flex items-center gap-1.5 rounded-lg border border-hub-cyan/35 bg-hub-cyan/10 px-2.5 py-1.5 text-[11px] font-semibold text-hub-cyan transition hover:bg-hub-cyan/18"
+                              >
+                                Save
+                              </button>
+                              {saveMenuOpen && (
+                                <div className="absolute right-0 z-40 mt-2 w-44 rounded-lg border border-white/[0.06] bg-hub-surface p-2 shadow-lg">
+                                  <button
+                                    type="button"
+                                    onClick={() => { void handleSaveOverwrite(); setSaveMenuOpen(false); }}
+                                    className="w-full text-left py-1 px-2 text-sm hover:bg-white/5"
+                                  >
+                                    Overwrite
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => { void handleSaveAsNew(); setSaveMenuOpen(false); }}
+                                    className="w-full text-left py-1 px-2 text-sm hover:bg-white/5"
+                                  >
+                                    Save as new
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => setSaveMenuOpen(false)}
+                                    className="w-full text-left py-1 px-2 text-sm text-hub-text-muted hover:bg-white/5"
+                                  >
+                                    Cancel
+                                  </button>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        </>
+                      )}
                     />
                   )}
                 </motion.div>
@@ -444,11 +596,12 @@ export function CommandCenter() {
           planSectionTitle={authed ? "Saved plans" : "My Quarters"}
           plans={sidebarPlans}
           activePlanId={activePlanId}
-          onSelectPlan={setActivePlanId}
+          onSelectPlan={(id) => { setActivePlanId(id); setPhase("dashboard"); }}
           newPlanLabel={
             authed ? "New saved plan" : "New quarter research"
           }
           onNewPlan={authed ? handleNewPlan : undefined}
+          onDeletePlan={authed ? handleDeletePlan : undefined}
           vaultItems={sidebarVault}
           vaultSynced={authed}
         />
