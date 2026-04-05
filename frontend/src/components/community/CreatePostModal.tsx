@@ -84,12 +84,18 @@ export function CreatePostModal({ trigger, onCreated }: CreatePostModalProps) {
             </div>
 
             <div>
-              <label className="mb-1.5 block text-xs font-medium text-hub-text-secondary">
-                Title <span className="text-hub-danger">*</span>
-              </label>
+              <div className="mb-1.5 flex items-center justify-between">
+                <label className="text-xs font-medium text-hub-text-secondary">
+                  Title <span className="text-hub-danger">*</span>
+                </label>
+                <span className={`text-xs ${title.length > 120 ? "text-hub-danger" : "text-hub-text-muted"}`}>
+                  {title.length} / 120
+                </span>
+              </div>
               <input
                 type="text"
                 required
+                maxLength={120}
                 placeholder="What's your question or topic?"
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}

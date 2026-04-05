@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { PlusCircle, Search } from "lucide-react";
+import { PlusCircle, Search, X, Users, ChevronLeft, ChevronRight } from "lucide-react";
 import { listPosts } from "@/lib/api/community";
 import type { PostListResponse, PostSummary } from "@/types/community";
 import { CreatePostModal } from "./CreatePostModal";
@@ -59,9 +59,16 @@ export function CommunityHub({ initialPosts, initialTotal }: CommunityHubProps) 
       {/* Header */}
       <div className="mb-6 flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-hub-text">Community</h1>
-          <p className="text-sm text-hub-text-muted">
+          <div className="flex items-center gap-2">
+            <Users className="h-5 w-5 text-hub-cyan" />
+            <h1 className="text-2xl font-bold text-hub-text">Community</h1>
+          </div>
+          <div className="mt-0.5 h-px w-24 bg-gradient-to-r from-hub-cyan/60 to-transparent" />
+          <p className="mt-1 text-sm text-hub-text-muted">
             Ask questions and share insights with other Tritons
+          </p>
+          <p className="mt-0.5 text-xs text-hub-text-muted">
+            {total} {total === 1 ? "discussion" : "discussions"}
           </p>
         </div>
         <CreatePostModal
@@ -79,32 +86,27 @@ export function CommunityHub({ initialPosts, initialTotal }: CommunityHubProps) 
       </div>
 
       {/* Filter */}
-      <form onSubmit={applyFilter} className="mb-6 flex gap-2">
-        <label className="relative flex-1">
+      <form onSubmit={applyFilter} className="mb-6">
+        <label className="relative flex items-center">
           <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-hub-text-muted" />
           <input
             type="text"
             value={filterInput}
             onChange={(e) => setFilterInput(e.target.value)}
-            placeholder="Filter by course code (e.g. CSE 110)"
-            className="h-9 w-full rounded-lg border border-white/[0.08] bg-hub-bg/80 pl-9 pr-3 text-sm text-hub-text outline-none ring-hub-cyan/40 placeholder:text-hub-text-muted focus:border-hub-cyan/40 focus:ring-2"
+            placeholder="Filter by course code (e.g. CSE 110) — press Enter to apply"
+            className="h-9 w-full rounded-lg border border-white/[0.08] bg-hub-bg/80 pl-9 pr-8 text-sm text-hub-text outline-none ring-hub-cyan/40 placeholder:text-hub-text-muted focus:border-hub-cyan/40 focus:ring-2"
           />
+          {filterInput && (
+            <button
+              type="button"
+              onClick={clearFilter}
+              className="absolute right-2.5 top-1/2 -translate-y-1/2 text-hub-text-muted transition hover:text-hub-text"
+              aria-label="Clear filter"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          )}
         </label>
-        <button
-          type="submit"
-          className="h-9 rounded-lg border border-hub-cyan/40 px-4 text-sm text-hub-cyan transition hover:bg-hub-cyan/10"
-        >
-          Filter
-        </button>
-        {filterCode && (
-          <button
-            type="button"
-            onClick={clearFilter}
-            className="h-9 rounded-lg border border-white/[0.08] px-4 text-sm text-hub-text-muted transition hover:text-hub-text"
-          >
-            Clear
-          </button>
-        )}
       </form>
 
       {/* Post list */}
@@ -132,8 +134,9 @@ export function CommunityHub({ initialPosts, initialTotal }: CommunityHubProps) 
             onClick={() =>
               fetchPosts({ courseCode: filterCode || undefined, page: page - 1 })
             }
-            className="h-8 rounded-lg border border-white/[0.08] px-3 text-sm text-hub-text-secondary transition hover:text-hub-text disabled:opacity-40"
+            className="inline-flex h-8 items-center gap-1 rounded-lg border border-white/[0.08] px-3 text-sm text-hub-text-secondary transition hover:text-hub-text disabled:opacity-40"
           >
+            <ChevronLeft className="h-4 w-4" />
             Prev
           </button>
           <span className="text-sm text-hub-text-muted">
@@ -145,9 +148,10 @@ export function CommunityHub({ initialPosts, initialTotal }: CommunityHubProps) 
             onClick={() =>
               fetchPosts({ courseCode: filterCode || undefined, page: page + 1 })
             }
-            className="h-8 rounded-lg border border-white/[0.08] px-3 text-sm text-hub-text-secondary transition hover:text-hub-text disabled:opacity-40"
+            className="inline-flex h-8 items-center gap-1 rounded-lg border border-white/[0.08] px-3 text-sm text-hub-text-secondary transition hover:text-hub-text disabled:opacity-40"
           >
             Next
+            <ChevronRight className="h-4 w-4" />
           </button>
         </div>
       )}
