@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { Bell, HelpCircle, Search } from "lucide-react";
+import { Bell, HelpCircle, Search, Users } from "lucide-react";
 import { UserAccountMenu } from "@/components/layout/UserAccountMenu";
 import { TritonMark } from "@/components/ui/TritonMark";
 import type { HubUser } from "@/types/hub-user";
@@ -44,6 +44,13 @@ export function Header({ user }: HeaderProps) {
       </div>
 
       <div className="ml-auto flex items-center gap-2">
+        <Link
+          href="/community"
+          className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-white/[0.08] px-3 text-sm text-hub-text-secondary transition hover:border-hub-cyan/30 hover:text-hub-cyan"
+        >
+          <Users className="h-4 w-4" />
+          Community
+        </Link>
         <button
           type="button"
           className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-white/[0.08] text-hub-text-secondary transition hover:border-white/[0.14] hover:text-hub-text"
