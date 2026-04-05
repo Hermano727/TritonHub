@@ -8,6 +8,9 @@ import { IngestionHub } from "@/components/ingestion/IngestionHub";
 import { ProcessingModal } from "@/components/modals/ProcessingModal";
 import { ClassCard } from "@/components/dashboard/ClassCard";
 import { EvaluatorFooter } from "@/components/dashboard/EvaluatorFooter";
+import { WeeklySchedule } from "@/components/dashboard/WeeklySchedule";
+import { TransitionWarnings } from "@/components/dashboard/TransitionWarnings";
+import { CampusPathMap } from "@/components/dashboard/CampusPathMap";
 import { mockDossier } from "@/lib/mock/dossier";
 import type { UiPhase } from "@/types/dossier";
 
@@ -42,18 +45,21 @@ export function CommandCenter() {
     setPhase("processing");
     setTerminalLines([]);
     const script = mockDossier.terminalScript;
+
     script.forEach((line, idx) => {
       const id = window.setTimeout(() => {
         setTerminalLines((prev) => [...prev, line]);
       }, idx * LINE_MS);
       timeoutsRef.current.push(id);
     });
+
     const doneId = window.setTimeout(() => {
       setPhase("dashboard");
       setIngestionCollapsed(true);
       processingLockRef.current = false;
       clearRun();
     }, script.length * LINE_MS + FINISH_PAD_MS);
+
     timeoutsRef.current.push(doneId);
   }, [clearRun]);
 
@@ -78,7 +84,9 @@ export function CommandCenter() {
       <div className="flex min-h-0 flex-1">
         <main className="relative min-w-0 flex-1 overflow-y-auto px-4 py-4 pb-10 lg:px-6">
           <div
-            className={`mx-auto max-w-4xl ${phase === "processing" ? "pointer-events-none blur-[2px]" : ""}`}
+            className={`mx-auto max-w-4xl ${
+              phase === "processing" ? "pointer-events-none blur-[2px]" : ""
+            }`}
           >
             <nav
               className="mb-4 flex flex-wrap items-center gap-1 text-xs text-hub-text-muted"
@@ -100,9 +108,7 @@ export function CommandCenter() {
             <IngestionHub
               phase={phase}
               collapsed={ingestionCollapsed}
-              onToggleCollapse={() =>
-                setIngestionCollapsed((c) => !c)
-              }
+              onToggleCollapse={() => setIngestionCollapsed((c) => !c)}
               onFilesSelected={handleFilesSelected}
               onManualSubmit={handleManualSubmit}
               classCount={mockDossier.classes.length}
@@ -122,7 +128,21 @@ export function CommandCenter() {
                   {mockDossier.classes.map((c) => (
                     <ClassCard key={c.id} dossier={c} />
                   ))}
+
+                  <WeeklySchedule scheduleItems={mockDossier.scheduleItems} />
+
+                  <TransitionWarnings
+                    transitionInsights={mockDossier.transitionInsights}
+                    scheduleItems={mockDossier.scheduleItems}
+                  />
+
+                  <CampusPathMap
+                    scheduleItems={mockDossier.scheduleItems}
+                    transitionInsights={mockDossier.transitionInsights}
+                  />
+
                   <EvaluatorFooter evaluation={mockDossier.evaluation} />
+
                   <p className="pt-2 text-center text-[11px] text-hub-text-muted">
                     <button
                       type="button"
@@ -137,6 +157,7 @@ export function CommandCenter() {
             </AnimatePresence>
           </div>
         </main>
+
         <RightSidebar
           quarters={mockDossier.quarters.map((q) => ({
             ...q,
