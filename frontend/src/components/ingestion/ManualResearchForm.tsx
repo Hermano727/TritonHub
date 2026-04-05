@@ -55,8 +55,7 @@ export function ManualResearchForm({
           className="space-y-3 border-t border-white/[0.06] p-4 pt-3"
         >
           <p className="text-xs text-hub-text-muted">
-            Queue a dossier before you enroll—same synthesis pipeline as file
-            ingestion.
+            Research a course before you enroll — enter the professor and course code below.
           </p>
           <div className="grid gap-3 sm:grid-cols-3">
             <label className="block text-xs font-medium text-hub-text-secondary">

@@ -5,11 +5,13 @@ import {
   useEffect,
   useId,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import {
+  CalendarDays,
   LayoutGrid,
   Maximize2,
   Plus,
@@ -18,11 +20,12 @@ import {
   Undo2,
   X,
 } from "lucide-react";
+import { Alert } from "@/components/ui/Alert";
 import { ClassCard } from "@/components/dashboard/ClassCard";
 import { EvaluatorFooter } from "@/components/dashboard/EvaluatorFooter";
 import { WeeklyCalendar } from "@/components/dashboard/WeeklyCalendar";
-import { GoogleIcon } from "@/components/icons/GoogleIcon";
 import { useCalendarSyncHandler } from "@/components/layout/calendar-sync-context";
+import { useCalendarState } from "@/components/layout/calendar-state-context";
 import {
   useScheduleEditor,
   useScheduleFingerprint,
@@ -87,8 +90,29 @@ export function DossierScheduleWorkspace({
   const [newStart, setNewStart] = useState("14:00");
   const [newEnd, setNewEnd] = useState("15:00");
   const [newColor, setNewColor] = useState(COMMITMENT_PRESETS[0].value);
+  const [blockError, setBlockError] = useState<string | null>(null);
 
   const onSyncCalendar = useCalendarSyncHandler();
+  const { reportCalendarVisible, registerOpenFullscreen } = useCalendarState();
+
+  const calendarRef = useRef<HTMLDivElement>(null);
+
+  // Register the fullscreen opener so the sidebar can trigger it
+  useEffect(() => {
+    registerOpenFullscreen(() => setFullscreenOpen(true));
+  }, [registerOpenFullscreen]);
+
+  // Track whether the calendar is in the viewport
+  useEffect(() => {
+    const el = calendarRef.current;
+    if (!el) return;
+    const observer = new IntersectionObserver(
+      ([entry]) => reportCalendarVisible(entry.isIntersecting),
+      { threshold: 0.1 },
+    );
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [reportCalendarVisible]);
 
   useEffect(() => {
     if (!addOpen && !fullscreenOpen) return;
@@ -102,13 +126,30 @@ export function DossierScheduleWorkspace({
   }, [addOpen, fullscreenOpen]);
 
   const openAddModal = useCallback(() => {
+    setBlockError(null);
     setAddOpen(true);
   }, []);
 
   const submitCommitment = useCallback(() => {
     const s = minutesFromTimeInput(newStart);
     const e = minutesFromTimeInput(newEnd);
-    if (s === null || e === null || e <= s) return;
+    if (s === null || e === null) {
+      setBlockError("Please enter valid start and end times.");
+      return;
+    }
+    if (e <= s) {
+      setBlockError(
+        "End time must be after the start time. Blocks can't span midnight — keep start and end on the same day.",
+      );
+      return;
+    }
+    if (e - s > 8 * 60) {
+      setBlockError(
+        "Blocks longer than 8 hours aren't supported. Consider splitting into multiple shorter blocks.",
+      );
+      return;
+    }
+    setBlockError(null);
     const c: ScheduleCommitment = {
       id: `commit-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
       title: newTitle.trim() || "Untitled",
@@ -187,9 +228,9 @@ export function DossierScheduleWorkspace({
         <button
           type="button"
           onClick={onSyncCalendar}
-          className="inline-flex items-center gap-1.5 rounded-lg border border-hub-cyan/35 bg-hub-cyan/10 px-2.5 py-1.5 text-[11px] font-semibold text-hub-cyan shadow-[0_0_20px_-8px_rgba(0,212,255,0.5)] transition hover:bg-hub-cyan/18"
+          className="inline-flex items-center gap-1.5 rounded-lg border border-hub-cyan/35 bg-hub-cyan/10 px-2.5 py-1.5 text-[11px] font-semibold text-hub-cyan transition hover:bg-hub-cyan/18"
         >
-          <GoogleIcon className="h-3.5 w-3.5 shrink-0" />
+          <CalendarDays className="h-3.5 w-3.5 shrink-0" aria-hidden />
           <span className="hidden sm:inline">Sync to Google Calendar</span>
           <span className="sm:hidden">Sync</span>
         </button>
@@ -208,9 +249,9 @@ export function DossierScheduleWorkspace({
   );
 
   const calendarNode = (px: number, calHeader: ReactNode | null) => (
-    <div className="flex min-h-0 flex-1 flex-col space-y-3">
+    <div className="flex flex-col space-y-3">
       {scheduleToolbar}
-      <div className="min-h-0 flex-1 lg:min-h-[min(520px,calc(100vh-14rem))]">
+      <div className="lg:min-h-[min(520px,calc(100vh-14rem))]">
         <WeeklyCalendar
           classes={classes}
           commitments={commitments}
@@ -261,7 +302,7 @@ export function DossierScheduleWorkspace({
       onClick={onSyncCalendar}
       className="inline-flex items-center gap-2 rounded-lg border border-hub-cyan/35 bg-hub-cyan/12 px-3 py-2 text-xs font-semibold text-hub-cyan transition hover:bg-hub-cyan/20"
     >
-      <GoogleIcon className="h-4 w-4 shrink-0" />
+      <CalendarDays className="h-4 w-4 shrink-0" aria-hidden />
       Sync to Google Calendar
     </button>
   );
@@ -281,7 +322,7 @@ export function DossierScheduleWorkspace({
             }`}
           >
             <LayoutGrid className="h-4 w-4 opacity-70" aria-hidden />
-            Dossier
+            Courses
           </button>
           <button
             type="button"
@@ -297,23 +338,28 @@ export function DossierScheduleWorkspace({
         </div>
       </div>
 
-      <div className="flex min-h-0 flex-col gap-6 lg:grid lg:grid-cols-[minmax(0,34%)_minmax(0,1fr)] lg:items-stretch lg:gap-5 xl:gap-7">
+      <div className="flex min-h-0 flex-col gap-6">
+        {/* Calendar on top */}
         <div
-          className={`min-w-0 space-y-4 lg:max-w-xl lg:justify-self-start ${mainTab === "schedule" ? "hidden lg:block" : ""}`}
+          ref={calendarRef}
+          className={mainTab === "dossier" ? "hidden lg:block" : ""}
+        >
+          {calendarNode(78, calendarHeaderActions)}
+        </div>
+
+        {/* Dossier cards below */}
+        <div
+          className={`grid gap-4 sm:grid-cols-2 xl:grid-cols-3 ${
+            mainTab === "schedule" ? "hidden lg:grid" : ""
+          }`}
         >
           {classes.map((c) => (
             <ClassCard key={c.id} dossier={c} />
           ))}
+        </div>
+        <div className={mainTab === "schedule" ? "hidden lg:block" : ""}>
           <EvaluatorFooter evaluation={evaluation} />
         </div>
-
-        <aside
-          className={`flex min-h-0 min-w-0 flex-col lg:sticky lg:top-4 lg:max-h-[calc(100vh-5.5rem)] lg:self-start lg:overflow-y-auto ${
-            mainTab === "dossier" ? "hidden lg:flex" : ""
-          }`}
-        >
-          {calendarNode(78, calendarHeaderActions)}
-        </aside>
       </div>
 
       <AnimatePresence>
@@ -403,6 +449,9 @@ export function DossierScheduleWorkspace({
               <p className="mt-1 text-xs text-hub-text-muted">
                 Work, gym, clubs — appears on the grid with your courses.
               </p>
+              <p className="mt-1 text-xs text-hub-text-muted">
+                Blocks must start and end within the same day — midnight-spanning entries are not supported.
+              </p>
 
               <div className="mt-5 space-y-4">
                 <label className="block">
@@ -460,6 +509,12 @@ export function DossierScheduleWorkspace({
                     />
                   </label>
                 </div>
+
+                {blockError && (
+                  <Alert variant={blockError.includes("longer than") ? "warn" : "error"}>
+                    {blockError}
+                  </Alert>
+                )}
 
                 <div>
                   <span className="text-[11px] font-medium uppercase tracking-wide text-hub-text-muted">

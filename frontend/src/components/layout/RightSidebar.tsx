@@ -1,6 +1,7 @@
 "use client";
 
-import { FileText, FolderOpen, Plus } from "lucide-react";
+import { CalendarDays, FileText, FolderOpen, Plus } from "lucide-react";
+import { useCalendarState } from "@/components/layout/calendar-state-context";
 import type { VaultItem } from "@/types/dossier";
 
 export type SidebarPlanRow = {
@@ -41,8 +42,23 @@ export function RightSidebar({
   vaultItems,
   vaultSynced,
 }: RightSidebarProps) {
+  const { calendarVisible, openCalendar } = useCalendarState();
+
   return (
     <aside className="glass-panel flex w-[260px] shrink-0 flex-col border-l border-white/[0.08]">
+      {!calendarVisible && (
+        <div className="border-b border-white/[0.06] p-3">
+          <button
+            type="button"
+            onClick={openCalendar}
+            className="flex w-full items-center gap-2.5 rounded-lg border border-hub-cyan/30 bg-hub-cyan/8 px-3 py-2.5 text-xs font-semibold text-hub-cyan transition hover:bg-hub-cyan/14"
+          >
+            <CalendarDays className="h-4 w-4 shrink-0" aria-hidden />
+            Open weekly schedule
+          </button>
+        </div>
+      )}
+
       <div className="border-b border-white/[0.06] p-4">
         <p className="font-[family-name:var(--font-outfit)] text-xs font-semibold uppercase tracking-[0.14em] text-hub-text-muted">
           {planSectionTitle}
@@ -95,13 +111,13 @@ export function RightSidebar({
         <div className="flex items-center gap-2">
           <FolderOpen className="h-4 w-4 text-hub-cyan" aria-hidden />
           <p className="font-[family-name:var(--font-outfit)] text-xs font-semibold uppercase tracking-[0.14em] text-hub-text-muted">
-            Resource Vault
+            Saved Files
           </p>
         </div>
         <p className="mt-1 text-[11px] leading-relaxed text-hub-text-muted">
           {vaultSynced
-            ? "Files in your private Supabase bucket. Shown: this plan plus items not attached to a plan."
-            : "Demo files only. Sign in to sync syllabi and WebReg exports across devices."}
+            ? "Your uploaded files for this plan."
+            : "Sign in to sync your files across devices."}
         </p>
         <ul className="mt-3 flex-1 space-y-2 overflow-y-auto pr-1">
           {vaultItems.length === 0 ? (
