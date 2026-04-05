@@ -97,6 +97,7 @@ export interface ScheduleEvaluation {
   fitnessMax: number;
   trendLabel: string;
   alerts: ScheduleAlert[];
+  recommendation?: string;
 }
 
 export interface ScheduleItem {

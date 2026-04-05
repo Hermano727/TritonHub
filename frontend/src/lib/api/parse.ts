@@ -52,6 +52,24 @@ export interface BatchResearchResponse {
   results: CourseResearchResult[];
 }
 
+export interface FitAnalysisResult {
+  fitness_score: number;
+  fitness_max: number;
+  trend_label: string;
+  alerts: Array<{ id: string; severity: "critical" | "warning" | "info"; title: string; detail: string }>;
+  recommendation: string;
+}
+
+export async function analyzeFit(results: CourseResearchResult[]): Promise<FitAnalysisResult> {
+  const res = await fetch("http://localhost:8000/api/fit-analysis", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ results }),
+  });
+  if (!res.ok) throw new Error(`Fit analysis failed: ${res.status} ${res.statusText}`);
+  return res.json() as Promise<FitAnalysisResult>;
+}
+
 export async function researchScreenshot(
   file: File,
 ): Promise<BatchResearchResponse> {
