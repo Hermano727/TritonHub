@@ -34,11 +34,17 @@ class Settings(BaseSettings):
     supabase_jwt_secret: str | None = None
     gemini_api_key: str
 
-    model_config = SettingsConfigDict(
-        env_file=(API_DIR / ".env", REPO_ROOT / ".env"),
-        env_file_encoding="utf-8",
-        extra="ignore",
-    )
+    # Google Calendar OAuth (optional — omit to disable the integration)
+    google_client_id: str = ""
+    google_client_secret: str = ""
+    google_redirect_uri: str = "http://127.0.0.1:8000/api/calendar/callback"
+    frontend_origin: str = "http://localhost:3000"
+
+    model_config = {
+        "env_file": ".env",
+        "env_file_encoding": "utf-8",
+        "extra": "ignore",  # allow NEXT_PUBLIC_* etc. if .env is shared with frontend
+    }
 
 
 @lru_cache(maxsize=1)

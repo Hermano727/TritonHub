@@ -117,7 +117,7 @@ export function ProfileHub({
             </div>
             <div className="min-w-0">
               <p className="font-[family-name:var(--font-jetbrains-mono)] text-[10px] font-medium uppercase tracking-[0.2em] text-hub-cyan">
-                Operator dossier
+                Your profile
               </p>
               <h1 className="mt-1 font-[family-name:var(--font-outfit)] text-2xl font-semibold tracking-tight text-hub-text sm:text-3xl">
                 {displayName}
@@ -174,8 +174,7 @@ export function ProfileHub({
             {quarters.length === 0 ? (
               <li className="rounded-xl border border-dashed border-white/[0.12] bg-hub-bg/30 px-4 py-8 text-center">
                 <p className="text-sm text-hub-text-muted">
-                  No quarters yet. Run ingestion on the home page while signed
-                  in.
+                  No quarters yet. Upload a schedule on the home page while signed in to save your work.
                 </p>
               </li>
             ) : (

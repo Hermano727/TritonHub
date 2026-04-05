@@ -1,7 +1,7 @@
 "use client";
 
-import { useCallback, useState } from "react";
-import { FileCode, FileImage, FileText, Upload } from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
+import { Clipboard, FileCode, FileImage, FileText, Upload } from "lucide-react";
 
 type DropZoneProps = {
   onFilesSelected: (files: FileList | File[]) => void;
@@ -18,6 +18,39 @@ export function DropZone({ onFilesSelected, disabled }: DropZoneProps) {
     },
     [disabled, onFilesSelected],
   );
+
+  // Window-level paste listener — fires automatically when user does Cmd/Ctrl+V
+  useEffect(() => {
+    if (disabled) return;
+    const onPaste = (e: ClipboardEvent) => {
+      const items = Array.from(e.clipboardData?.items ?? []);
+      const imageItem = items.find((item) => item.type.startsWith("image/"));
+      if (!imageItem) return;
+      const file = imageItem.getAsFile();
+      if (file) onFilesSelected([file]);
+    };
+    window.addEventListener("paste", onPaste);
+    return () => window.removeEventListener("paste", onPaste);
+  }, [disabled, onFilesSelected]);
+
+  // Button-triggered paste via Clipboard API (requires clipboard-read permission)
+  const handlePasteClick = useCallback(async () => {
+    if (disabled) return;
+    try {
+      const clipboardItems = await navigator.clipboard.read();
+      for (const item of clipboardItems) {
+        const imageType = item.types.find((t) => t.startsWith("image/"));
+        if (imageType) {
+          const blob = await item.getType(imageType);
+          const file = new File([blob], "clipboard-image.png", { type: imageType });
+          onFilesSelected([file]);
+          return;
+        }
+      }
+    } catch {
+      // Permission denied or no image in clipboard — user can paste with Ctrl/Cmd+V instead
+    }
+  }, [disabled, onFilesSelected]);
 
   return (
     <div
@@ -61,19 +94,30 @@ export function DropZone({ onFilesSelected, disabled }: DropZoneProps) {
           <FileImage className="h-6 w-6" aria-hidden />
         </div>
         <p className="font-[family-name:var(--font-outfit)] text-base font-semibold text-hub-text">
-          Drop WebReg HTML, syllabus PDF, or a screenshot
+          Attach your WebReg schedule or syllabi
         </p>
         <p className="mt-2 max-w-md text-sm text-hub-text-secondary">
-          We parse your schedule and cross-reference SETs, Reddit, and syllabus
-          logistics into one dossier per class.
+          We'll parse your schedule, cross-reference course evaluations, and
+          build a summary for each class.
         </p>
-        <label
-          htmlFor="ingest-input"
-          className="mt-6 inline-flex cursor-pointer items-center gap-2 rounded-lg border border-white/[0.12] bg-hub-surface-elevated px-4 py-2 text-sm font-medium text-hub-text transition hover:border-hub-cyan/35 hover:text-hub-cyan"
-        >
-          <Upload className="h-4 w-4" />
-          Browse files
-        </label>
+        <div className="mt-6 flex flex-wrap items-center justify-center gap-3">
+          <label
+            htmlFor="ingest-input"
+            className="inline-flex cursor-pointer items-center gap-2 rounded-lg border border-white/[0.12] bg-hub-surface-elevated px-4 py-2 text-sm font-medium text-hub-text transition hover:border-hub-cyan/35 hover:text-hub-cyan"
+          >
+            <Upload className="h-4 w-4" />
+            Browse files
+          </label>
+          <button
+            type="button"
+            onClick={handlePasteClick}
+            disabled={disabled}
+            className="inline-flex items-center gap-2 rounded-lg border border-white/[0.12] bg-hub-surface-elevated px-4 py-2 text-sm font-medium text-hub-text transition hover:border-hub-cyan/35 hover:text-hub-cyan disabled:pointer-events-none disabled:opacity-50"
+          >
+            <Clipboard className="h-4 w-4" />
+            Paste screenshot
+          </button>
+        </div>
       </div>
     </div>
   );

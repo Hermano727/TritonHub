@@ -369,7 +369,7 @@ export function CommandCenter() {
               {phase === "dashboard" ? (
                 <>
                   <ChevronRight className="h-3 w-3" aria-hidden />
-                  <span className="text-hub-cyan">Dossier view</span>
+                  <span className="text-hub-cyan">Courses</span>
                 </>
               ) : null}
             </nav>
@@ -396,25 +396,17 @@ export function CommandCenter() {
                 >
                   {viewClasses.length === 0 ? (
                     <p className="rounded-xl border border-white/[0.08] bg-hub-bg/40 px-4 py-8 text-center text-sm text-hub-text-muted">
-                      No dossier data for this plan yet. Run ingestion above or
-                      pick another saved plan.
+                      No schedule data for this plan yet. Upload your schedule above or select another saved plan.
                     </p>
                   ) : (
                     <DossierScheduleWorkspace
                       viewClasses={viewClasses}
                       evaluation={viewEvaluation}
                       hydrateKey={`${activePlanId}:${authed}`}
+                      scheduleItems={mockDossier.scheduleItems}
+                      transitionInsights={mockDossier.transitionInsights}
                     />
                   )}
-                  <p className="pt-2 text-center text-[11px] text-hub-text-muted">
-                    <button
-                      type="button"
-                      onClick={resetDemo}
-                      className="underline decoration-white/20 underline-offset-2 hover:text-hub-cyan"
-                    >
-                      Reset demo state
-                    </button>
-                  </p>
                 </motion.div>
               ) : null}
             </AnimatePresence>

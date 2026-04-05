@@ -21,7 +21,7 @@ export function ClassCard({ dossier }: ClassCardProps) {
       <header className="flex flex-wrap items-start justify-between gap-3 border-b border-white/[0.06] pb-4">
         <div className="min-w-0">
           <p className="text-[11px] font-medium uppercase tracking-[0.12em] text-hub-text-muted">
-            Class dossier
+            Course summary
           </p>
           <h3 className="mt-1 font-[family-name:var(--font-outfit)] text-lg font-semibold tracking-tight text-hub-text">
             {dossier.courseCode}{" "}
