@@ -55,7 +55,7 @@ export function CommunityHub({ initialPosts, initialTotal }: CommunityHubProps) 
   }
 
   return (
-    <div className="mx-auto max-w-3xl px-4 py-8">
+    <div className="w-full px-8 py-8">
       {/* Header */}
       <div className="mb-6 flex items-center justify-between">
         <div>
