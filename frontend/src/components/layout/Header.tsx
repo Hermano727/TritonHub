@@ -22,9 +22,6 @@ export function Header({ user }: HeaderProps) {
           <p className="font-[family-name:var(--font-outfit)] text-sm font-semibold tracking-tight text-hub-text">
             Reg2Schedg
           </p>
-          <p className="truncate text-[11px] text-hub-text-muted">
-            Command Center
-          </p>
         </div>
       </Link>
 
