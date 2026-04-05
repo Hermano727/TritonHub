@@ -3,8 +3,17 @@
 import { useEffect, useMemo } from "react";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
-import { MapContainer, Marker, useMap } from "react-leaflet";
+import { MapContainer, Marker, Tooltip, Popup, useMap } from "react-leaflet";
 import type { PlottedItem } from "./CampusPathMap";
+
+function fmt12(hhmm: string): string {
+  const [hStr, mStr] = hhmm.split(":");
+  const h = parseInt(hStr, 10);
+  const m = parseInt(mStr ?? "0", 10);
+  const period = h >= 12 ? "PM" : "AM";
+  const hour = h % 12 || 12;
+  return `${hour}:${String(m).padStart(2, "0")} ${period}`;
+}
 
 type CampusPathLeafletMapProps = {
   plottedItems: PlottedItem[];
@@ -177,8 +186,36 @@ export function CampusPathLeafletMap({
             key={item.id}
             position={[item.lat, item.lng]}
             icon={sequenceIcons[index]}
-            title={item.location ?? item.title}
-          />
+          >
+            <Tooltip direction="top" offset={[0, -16]} opacity={1}>
+              <span style={{ fontWeight: 700 }}>{item.title}</span>
+              {item.location && (
+                <span style={{ color: "#94a3b8", display: "block" }}>{item.location}</span>
+              )}
+              {item.start && item.end && (
+                <span style={{ color: "#67e8f9", display: "block" }}>
+                  {fmt12(item.start)} – {fmt12(item.end)}
+                </span>
+              )}
+            </Tooltip>
+            <Popup>
+              <div style={{ padding: "10px 12px", minWidth: 180 }}>
+                <p style={{ fontWeight: 700, marginBottom: 4, color: "#e2e8f0" }}>
+                  {item.title}
+                </p>
+                {item.location && (
+                  <p style={{ color: "#94a3b8", fontSize: 12, marginBottom: 4 }}>
+                    {item.location}
+                  </p>
+                )}
+                {item.start && item.end && (
+                  <p style={{ color: "#67e8f9", fontSize: 12 }}>
+                    {fmt12(item.start)} – {fmt12(item.end)}
+                  </p>
+                )}
+              </div>
+            </Popup>
+          </Marker>
         ))}
       </MapContainer>
 
