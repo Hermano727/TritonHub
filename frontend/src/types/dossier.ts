@@ -81,6 +81,28 @@ export interface ScheduleEvaluation {
   alerts: ScheduleAlert[];
 }
 
+export interface ScheduleItem {
+  id: string;
+  title: string;
+  kind: "class" | "work" | "personal";
+  day: "Mon" | "Tue" | "Wed" | "Thu" | "Fri";
+  start: string;
+  end: string;
+  location?: string;
+  zone?: string;
+  buildingCode?: string;
+}
+
+export interface TransitionInsight {
+  id: string;
+  fromId: string;
+  toId: string;
+  walkMinutes: number;
+  gapMinutes: number;
+  risk: "safe" | "tight" | "impossible";
+  detail: string;
+}
+
 export interface MockDossierPayload {
   activeQuarterId: string;
   quarters: QuarterRef[];
@@ -88,4 +110,6 @@ export interface MockDossierPayload {
   classes: ClassDossier[];
   evaluation: ScheduleEvaluation;
   terminalScript: string[];
+  scheduleItems: ScheduleItem[];
+  transitionInsights: TransitionInsight[];
 }
