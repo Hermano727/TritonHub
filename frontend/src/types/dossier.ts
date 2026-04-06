@@ -142,8 +142,10 @@ export interface ScheduleItem {
   location?: string;
   zone?: string;
   buildingCode?: string;
+  buildingDisplayName?: string;
   lat?: number;
   lng?: number;
+  geocode_status?: "resolved" | "ambiguous" | "unresolved";
 }
 
 export interface TransitionInsight {

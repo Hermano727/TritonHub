@@ -494,17 +494,29 @@ async def run_course_logistics(
 
 def enrich_meetings_with_geocode(meetings: list[SectionMeeting]) -> list[SectionMeeting]:
     """Attach lat/lng/building_code to each meeting that has a non-empty location string."""
+    import logging
+    _log = logging.getLogger(__name__)
     enriched = []
     for meeting in meetings:
         if meeting.location and meeting.lat is None:
+            _log.info("[geocode] resolving meeting location=%r section_type=%r", meeting.location, meeting.section_type)
             result = geocode_location(meeting.location)
             if result:
+                _log.info(
+                    "[geocode] resolved  location=%r → code=%s provider=%s (%.5f, %.5f)",
+                    meeting.location, result.building_code, result.provider, result.lat, result.lng,
+                )
                 meeting = meeting.model_copy(update={
                     "building_code": result.building_code,
                     "lat": result.lat,
                     "lng": result.lng,
                     "geocode_status": result.status,
                 })
+            else:
+                _log.warning("[geocode] FAILED    location=%r section_type=%r — marker will be hidden", meeting.location, meeting.section_type)
+                meeting = meeting.model_copy(update={"geocode_status": "unresolved"})
+        elif meeting.lat is not None:
+            _log.info("[geocode] skipped   location=%r — lat/lng already set by backend", meeting.location)
         enriched.append(meeting)
     return enriched
 

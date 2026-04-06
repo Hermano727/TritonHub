@@ -39,13 +39,14 @@ const TILE_OPTIONS: TileLayerOptions = {
   attribution: "&copy; OpenStreetMap contributors",
 };
 
-function makeSequenceIcon(order: number) {
+function makeSequenceIcon(order: number, uncertain = false) {
   const label = String(order);
+  const cls = uncertain
+    ? "rp-seq-icon__inner rp-seq-icon__inner--uncertain"
+    : "rp-seq-icon__inner";
   return L.divIcon({
     className: "rp-seq-icon",
-    html: `
-      <div class="rp-seq-icon__inner">${label}</div>
-    `,
+    html: `<div class="${cls}">${label}</div>`,
     iconSize: [28, 28],
     iconAnchor: [14, 14],
   });
@@ -152,7 +153,9 @@ export function CampusPathLeafletMap({
   );
 
   const sequenceIcons = useMemo(
-    () => plottedItems.map((_, index) => makeSequenceIcon(index + 1)),
+    () => plottedItems.map((item, index) =>
+      makeSequenceIcon(index + 1, item.geocode_status === "unresolved")
+    ),
     [plottedItems],
   );
 

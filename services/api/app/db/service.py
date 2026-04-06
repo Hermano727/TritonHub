@@ -18,6 +18,28 @@ TERM_ORDER = {
 }
 
 
+def search_campus_building_by_name(client: Client, raw_location: str) -> dict[str, Any] | None:
+    """
+    Search campus_buildings by display_name or aliases for locations that don't
+    match a known building code (e.g. Gemini outputs 'Peterson Hall 110').
+    Tries each whitespace-delimited token from the raw location string.
+    """
+    tokens = re.sub(r"[^\w\s]", "", raw_location.upper()).split()
+    for token in tokens:
+        if len(token) < 4:
+            continue  # skip short tokens like room numbers
+        resp = (
+            client.table("campus_buildings")
+            .select("code,display_name,lat,lng")
+            .ilike("display_name", f"%{token}%")
+            .limit(1)
+            .execute()
+        )
+        if resp.data:
+            return resp.data[0]
+    return None
+
+
 def insert_saved_plan(client: Client, user_id: str, body: SavedPlanCreate) -> dict[str, Any]:
     row = {
         "user_id": user_id,

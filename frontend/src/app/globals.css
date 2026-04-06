@@ -102,6 +102,12 @@ body {
   justify-content: center;
 }
 
+.rp-seq-icon__inner--uncertain {
+  background: linear-gradient(180deg, rgba(251,191,36,0.95), rgba(180,130,20,0.95));
+  border: 2px solid rgba(255,255,255,0.7);
+  color: #1c1008;
+}
+
 .rp-tooltip {
   padding: 8px 10px !important;
   min-width: 160px;

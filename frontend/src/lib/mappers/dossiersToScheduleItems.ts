@@ -72,6 +72,11 @@ export function dossiersToScheduleItems(dossiers: ClassDossier[]): ScheduleItem[
         }
       }
 
+      // Look up full display name for Google Maps deep-links
+      const buildingDisplayName = buildingCode
+        ? campusLocationMap.get(buildingCode)?.name
+        : undefined;
+
       for (const day of days) {
         const sanitizedStart = start.replace(/:/g, "");
         const id = `${dossier.id}-${meeting.section_type}-${day}-${sanitizedStart}`.toLowerCase().replace(/\s+/g, "-");
@@ -84,7 +89,9 @@ export function dossiersToScheduleItems(dossiers: ClassDossier[]): ScheduleItem[
           end,
           location: meeting.location || undefined,
           buildingCode,
+          buildingDisplayName,
           ...(lat != null && lng != null ? { lat, lng } : {}),
+          ...(meeting.geocode_status ? { geocode_status: meeting.geocode_status as ScheduleItem["geocode_status"] } : {}),
         };
         items.push(item);
       }

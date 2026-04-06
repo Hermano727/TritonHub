@@ -2,8 +2,8 @@
 UCSD geocoding service.
 
 Resolution order:
-  1. Supabase `course_locations` cache (keyed by normalized location string)
-  2. Static UCSD building table (no API key required)
+  1. Static UCSD building table — exact code / alias match (no I/O, fastest)
+  2. Supabase `campus_buildings` — display-name / alias search (DB lookup)
   3. Google Maps Text Search (if GOOGLE_MAPS_API_KEY is set in env)
 
 Returns None for locations that cannot be resolved.
@@ -87,18 +87,28 @@ UCSD_BUILDINGS: dict[str, dict[str, Any]] = {
     "SERF":   {"display": "Student Services Center",        "lat": 32.87960, "lng": -117.23665},
 }
 
-# Alias → canonical code (handles Gemini variations)
+# Alias → canonical code (handles Gemini variations and full display-name words)
 _ALIASES: dict[str, str] = {
-    "CENTER": "CENTR",
-    "CTR":    "CENTR",
-    "WL":     "WLH",
-    "PEPPER": "PCYNH",
-    "MAND":   "MANDE",
-    "LIB":    "GEISEL",
-    "COGNITIVE": "CSB",
-    "SKAGG":  "SKAGGS",
-    "EBEN":   "EBU1",
-    "EBUB":   "EBU3B",
+    # Short-form aliases
+    "CENTER":      "CENTR",
+    "CTR":         "CENTR",
+    "WL":          "WLH",
+    "PEPPER":      "PCYNH",
+    "MAND":        "MANDE",
+    "LIB":         "GEISEL",
+    "COGNITIVE":   "CSB",
+    "SKAGG":       "SKAGGS",
+    "EBEN":        "EBU1",
+    "EBUB":        "EBU3B",
+    # Full display-name first-word aliases (Gemini often outputs the building's full name)
+    "PETERSON":    "PETER",
+    "GALBRAITH":   "GALB",
+    "MANDEVILLE":  "MANDE",
+    "LEICHTAG":    "LEDDN",
+    "MARSHALL":    "MARSH",
+    "ATKINSON":    "ATK",
+    "APPLIED":     "APM",   # "Applied Physics & Mathematics"
+    "BONNER":      "BONNER",
 }
 
 
@@ -124,19 +134,13 @@ def _extract_building_code(normalized: str) -> str | None:
         return None
     first = tokens[0]
 
-    # Exact match
     if first in UCSD_BUILDINGS:
         return first
-
-    # Alias match
     if first in _ALIASES:
         return _ALIASES[first]
-
-    # Prefix match (e.g. "CENTR" matches "CENTRH" unlikely but defensive)
     for code in UCSD_BUILDINGS:
         if normalized.startswith(code):
             return code
-
     return None
 
 
@@ -154,10 +158,39 @@ def _lookup_static(building_code: str) -> GeocodedLocation | None:
     )
 
 
+def _lookup_supabase(raw_location: str) -> GeocodedLocation | None:
+    """
+    Query the `campus_buildings` Supabase table when the static dict misses.
+    Searches by display_name (ILIKE) so full names like 'Peterson Hall 110' resolve correctly.
+    """
+    try:
+        from app.db.client import get_supabase_client
+        from app.db.service import search_campus_building_by_name
+        row = search_campus_building_by_name(get_supabase_client(), raw_location)
+        if row:
+            logger.info(
+                "[geocode] supabase hit  raw=%r → code=%s display=%r (%.5f, %.5f)",
+                raw_location, row["code"], row["display_name"], row["lat"], row["lng"],
+            )
+            return GeocodedLocation(
+                building_code=row["code"],
+                display_name=row["display_name"],
+                lat=row["lat"],
+                lng=row["lng"],
+                status="resolved",
+                provider="supabase",
+            )
+        logger.info("[geocode] supabase miss raw=%r — no display_name match", raw_location)
+    except Exception as exc:
+        logger.warning("[geocode] supabase error raw=%r: %s", raw_location, exc)
+    return None
+
+
 def _lookup_google(raw_location: str) -> GeocodedLocation | None:
     """Call Google Maps Text Search API. Requires GOOGLE_MAPS_API_KEY."""
     api_key = os.getenv("GOOGLE_MAPS_API_KEY")
     if not api_key:
+        logger.info("[geocode] google skip  raw=%r — GOOGLE_MAPS_API_KEY not set", raw_location)
         return None
 
     query = f"{raw_location}, UC San Diego, La Jolla CA"
@@ -171,9 +204,14 @@ def _lookup_google(raw_location: str) -> GeocodedLocation | None:
         data = resp.json()
         results = data.get("results", [])
         if not results:
+            logger.info("[geocode] google miss  raw=%r — API returned no results", raw_location)
             return None
         top = results[0]
         loc = top["geometry"]["location"]
+        logger.info(
+            "[geocode] google hit   raw=%r → %r (%.5f, %.5f)",
+            raw_location, top.get("name"), loc["lat"], loc["lng"],
+        )
         return GeocodedLocation(
             building_code=None,
             display_name=top.get("name", raw_location),
@@ -183,7 +221,7 @@ def _lookup_google(raw_location: str) -> GeocodedLocation | None:
             provider="google",
         )
     except Exception as exc:
-        logger.warning("Google Maps geocode failed for %r: %s", raw_location, exc)
+        logger.warning("[geocode] google error raw=%r: %s", raw_location, exc)
         return None
 
 
@@ -192,8 +230,9 @@ def geocode_location(raw_location: str) -> GeocodedLocation | None:
     Resolve a raw location string to geographic coordinates.
 
     Resolution order:
-      1. Static UCSD building table (no API required)
-      2. Google Maps Text Search (if GOOGLE_MAPS_API_KEY env var is set)
+      1. Static UCSD building table — exact code / alias match (no I/O)
+      2. Supabase `campus_buildings` — display-name search
+      3. Google Maps Text Search (if GOOGLE_MAPS_API_KEY env var is set)
 
     Returns None if the location cannot be resolved.
     """
@@ -202,17 +241,29 @@ def geocode_location(raw_location: str) -> GeocodedLocation | None:
 
     normalized = normalize_location(raw_location)
 
-    # Try static table first
+    # 1. Static table (fast, no I/O)
     building_code = _extract_building_code(normalized)
     if building_code:
         result = _lookup_static(building_code)
         if result:
+            logger.info(
+                "[geocode] static hit   raw=%r → code=%s (%.5f, %.5f)",
+                raw_location, building_code, result.lat, result.lng,
+            )
             return result
+        logger.info("[geocode] static miss  raw=%r — extracted code=%r not in table", raw_location, building_code)
+    else:
+        logger.info("[geocode] static miss  raw=%r — no building code extracted (normalized=%r)", raw_location, normalized)
 
-    # Fall back to Google Maps
+    # 2. Supabase campus_buildings (display-name / alias search)
+    result = _lookup_supabase(raw_location)
+    if result:
+        return result
+
+    # 3. Google Maps Text Search
     result = _lookup_google(raw_location)
     if result:
         return result
 
-    logger.debug("Could not geocode location: %r", raw_location)
+    logger.warning("[geocode] UNRESOLVED   raw=%r — all lookup steps failed", raw_location)
     return None

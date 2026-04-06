@@ -110,8 +110,11 @@ export function CampusPathMap({
                 key={`item-${item.id}-${index}`}
                 className="rounded-lg border border-white/[0.08] bg-hub-surface/75 p-2"
               >
-                <p className="text-sm font-semibold text-hub-text">
+                <p className="text-sm font-semibold text-hub-text flex items-center gap-1">
                   {index + 1}. {item.title}
+                  {item.geocode_status === "unresolved" && (
+                    <span title="Location could not be confirmed — pin may be inaccurate" className="text-amber-400">⚠</span>
+                  )}
                 </p>
                 {item.location && (
                   <p className="text-xs text-hub-text-muted">{item.location}</p>
@@ -127,7 +130,7 @@ export function CampusPathMap({
                   </p>
                 )}
                 <a
-                  href={getGoogleMapsUrl(item.location ?? item.title)}
+                  href={getGoogleMapsUrl(item.buildingDisplayName ?? item.location ?? item.title)}
                   target="_blank"
                   rel="noreferrer"
                   className="mt-2 inline-flex items-center gap-1 text-xs text-hub-cyan hover:underline"
