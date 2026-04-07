@@ -20,10 +20,20 @@ class FitAlert(BaseModel):
     detail: str
 
 
+class FitCategory(BaseModel):
+    label: str
+    score: float
+    max: float = 10.0
+    color: str
+    detail: str
+
+
 class FitAnalysisResult(BaseModel):
+    # Interpreted as schedule difficulty: 1 = easy, 10 = very hard
     fitness_score: float
     fitness_max: float = 10.0
     trend_label: str
+    categories: list[FitCategory] = []
     alerts: list[FitAlert]
     recommendation: str
 
@@ -189,11 +199,11 @@ def build_fit_prompt(
         f"- Average RateMyProfessor difficulty: {diff_str}\n"
         f"- Courses with missing logistics: {missing_str}\n\n"
         "## Task\n"
-        "Return JSON with: fitness_score (0–10), fitness_max (10.0), trend_label (short phrase like "
-        "'Manageable' or 'Heavy Load'), alerts (up to 5, each: id like 'a1', severity, title, detail), "
-        "recommendation (2–4 sentence paragraph). "
-        "Rules: any time conflict must produce a critical alert; hedge if data is missing; "
-        "no markdown fences in your response."
+        "Return JSON with: fitness_score (1–10 where 1 = easy quarter and 10 = very hard), "
+        "fitness_max (10.0), trend_label (short phrase like 'Manageable' or 'Heavy Load'), "
+        "categories (array, up to 4 — e.g. Campus Flow, Workload, Time Spread, Life Balance; each: label, score (1–10), max (10), color (hex string like '#00d4ff'), detail (short explanation)), "
+        "alerts (up to 5, each: id like 'a1', severity, title, detail), recommendation (2–4 sentence paragraph). "
+        "Rules: any time conflict must produce a critical alert; hedge if data is missing; prefer the categories named above when relevant; no markdown fences in your response."
     )
 
 

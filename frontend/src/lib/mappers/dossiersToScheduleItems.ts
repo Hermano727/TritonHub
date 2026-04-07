@@ -37,6 +37,13 @@ function to24h(time12: string): string {
   return `${String(h).padStart(2, "0")}:${m}`;
 }
 
+const EXAM_SECTION_TYPES = new Set(["fi", "mi", "final", "finals", "midterm", "midterms"]);
+
+/** Returns true if the section_type is a final exam or midterm (should not appear on main calendar). */
+export function isExamSection(sectionType: string): boolean {
+  return EXAM_SECTION_TYPES.has(sectionType.toLowerCase().trim());
+}
+
 /**
  * Convert a list of ClassDossiers (from the research API) into ScheduleItem[]
  * suitable for feeding into CampusPathMap and the weekly calendar.
@@ -51,6 +58,8 @@ export function dossiersToScheduleItems(dossiers: ClassDossier[]): ScheduleItem[
   for (const dossier of dossiers) {
     for (let meetingIdx = 0; meetingIdx < dossier.meetings.length; meetingIdx++) {
       const meeting = dossier.meetings[meetingIdx];
+      // Exams are shown in a separate section — exclude from map/calendar items
+      if (isExamSection(meeting.section_type)) continue;
       const days = expandDays(meeting.days);
       if (days.length === 0) continue;
 

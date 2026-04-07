@@ -15,8 +15,14 @@ function fmt12(hhmm: string): string {
   return `${hour}:${String(m).padStart(2, "0")} ${period}`;
 }
 
+function getGoogleMapsUrl(locationName: string) {
+  const query = `${locationName}, UC San Diego`;
+  return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(query)}`;
+}
+
 type CampusPathLeafletMapProps = {
   plottedItems: PlottedItem[];
+  highlightedDossierId?: string | null;
 };
 
 type TileLayerOptions = {
@@ -39,9 +45,11 @@ const TILE_OPTIONS: TileLayerOptions = {
   attribution: "&copy; OpenStreetMap contributors",
 };
 
-function makeSequenceIcon(order: number, uncertain = false) {
+function makeSequenceIcon(order: number, uncertain = false, highlighted = false) {
   const label = String(order);
-  const cls = uncertain
+  const cls = highlighted
+    ? "rp-seq-icon__inner rp-seq-icon__inner--highlighted"
+    : uncertain
     ? "rp-seq-icon__inner rp-seq-icon__inner--uncertain"
     : "rp-seq-icon__inner";
   return L.divIcon({
@@ -146,6 +154,7 @@ function FitToData({
 
 export function CampusPathLeafletMap({
   plottedItems,
+  highlightedDossierId,
 }: CampusPathLeafletMapProps) {
   const fitPoints = useMemo(
     () => [...plottedItems.map((item) => ({ lat: item.lat, lng: item.lng }))],
@@ -153,10 +162,11 @@ export function CampusPathLeafletMap({
   );
 
   const sequenceIcons = useMemo(
-    () => plottedItems.map((item, index) =>
-      makeSequenceIcon(index + 1, item.geocode_status === "unresolved")
-    ),
-    [plottedItems],
+    () => plottedItems.map((item, index) => {
+      const highlighted = highlightedDossierId != null && item.id.startsWith(highlightedDossierId + "-");
+      return makeSequenceIcon(index + 1, item.geocode_status === "unresolved", highlighted);
+    }),
+    [plottedItems, highlightedDossierId],
   );
 
   // Detect items sharing the same lat/lng (different courses, same building)
@@ -170,7 +180,7 @@ export function CampusPathLeafletMap({
   }, [plottedItems]);
 
   return (
-    <div className="relative h-[420px] overflow-hidden rounded-xl border border-white/[0.08] bg-[#071124]">
+    <div className="relative h-[280px] overflow-hidden rounded-xl border border-white/[0.08] bg-[#071124]">
       <MapContainer
         center={DEFAULT_CENTER}
         zoom={15}
@@ -200,28 +210,52 @@ export function CampusPathLeafletMap({
                 <div className="rp-tooltip__time">{fmt12(item.start)} — {fmt12(item.end)}</div>
               )}
             </Tooltip>
-            <Popup>
-              <div className="glass-panel rp-popup-content p-3" style={{ minWidth: 220 }}>
-                <div className="rp-popup-header flex items-center justify-between gap-3">
+            <Popup className="rp-dark-popup">
+              <div style={{ minWidth: 220, padding: "12px 14px" }}>
+                {/* Header row: title + order badge */}
+                <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 8, marginBottom: 8 }}>
                   <div>
-                    <div className="text-sm font-semibold text-hub-text">{item.title}</div>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: "#e2e8f0" }}>{item.title}</div>
                     {item.location && (
-                      <div className="text-[12px] text-hub-text-muted mt-1">{item.location}</div>
-                    )}
-                    {item.days?.length > 0 && (
-                      <div className="text-[12px] text-hub-text-muted mt-0.5">{item.days.join(" · ")}</div>
+                      <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 3 }}>
+                        {item.buildingDisplayName ? `${item.buildingDisplayName} · ` : ""}{item.location}
+                      </div>
                     )}
                   </div>
-                  <div className="rp-popup-badge ml-2 text-[12px] font-semibold text-hub-cyan">{index + 1}</div>
+                  <span style={{ flexShrink: 0, background: "rgba(0,212,255,0.08)", border: "1px solid rgba(0,212,255,0.22)", borderRadius: 6, padding: "2px 7px", fontSize: 11, color: "#00d4ff", fontWeight: 600 }}>
+                    #{index + 1}
+                  </span>
                 </div>
-                {item.start && item.end && (
-                  <div className="mt-3 text-[13px] text-hub-cyan">{fmt12(item.start)} — {fmt12(item.end)}</div>
-                )}
-                {locationCounts.get(`${item.lat.toFixed(5)},${item.lng.toFixed(5)}`)! > 1 && (
-                  <div className="mt-2 text-[11px] text-amber-300">
-                    Multiple classes meet at this building
+
+                {/* Days */}
+                {item.days?.length > 0 && (
+                  <div style={{ fontSize: 11, color: "#64748b", marginBottom: 4 }}>
+                    {item.days.join(" · ")}
                   </div>
                 )}
+
+                {/* Time */}
+                {item.start && item.end && (
+                  <div style={{ fontSize: 12, color: "#00d4ff", fontWeight: 600, marginBottom: 10 }}>
+                    {fmt12(item.start)} — {fmt12(item.end)}
+                  </div>
+                )}
+
+                {locationCounts.get(`${item.lat.toFixed(5)},${item.lng.toFixed(5)}`)! > 1 && (
+                  <div style={{ fontSize: 11, color: "#fcd34d", marginBottom: 8 }}>
+                    Multiple classes meet here
+                  </div>
+                )}
+
+                {/* Google Maps link */}
+                <a
+                  href={getGoogleMapsUrl(item.buildingDisplayName ?? item.location ?? item.title)}
+                  target="_blank"
+                  rel="noreferrer"
+                  style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, color: "#00d4ff", fontWeight: 500, textDecoration: "none", borderTop: "1px solid rgba(255,255,255,0.06)", paddingTop: 8, width: "100%" }}
+                >
+                  Open in Google Maps ↗
+                </a>
               </div>
             </Popup>
           </Marker>

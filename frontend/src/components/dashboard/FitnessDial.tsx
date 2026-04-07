@@ -135,7 +135,7 @@ export function FitnessDial({ evaluation }: FitnessDialProps) {
               textTransform: "uppercase",
             }}
           >
-            out of {evaluation.fitnessMax}
+            Schedule difficulty — 1 = easy · 10 = very hard
           </text>
         </svg>
       </div>

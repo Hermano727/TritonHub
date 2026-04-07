@@ -2,13 +2,14 @@
 
 import { useMemo } from "react";
 import dynamic from "next/dynamic";
-import { ExternalLink } from "lucide-react";
+import { AlertTriangle } from "lucide-react";
 import type { ScheduleItem, TransitionInsight } from "@/types/dossier";
 import { campusLocations } from "@/lib/mock/campusLocations";
 
 type CampusPathMapProps = {
   scheduleItems: ScheduleItem[];
   transitionInsights: TransitionInsight[];
+  highlightedDossierId?: string | null;
 };
 
 export type PlottedItem = ScheduleItem & {
@@ -26,30 +27,18 @@ const CampusPathLeafletMap = dynamic(
   {
     ssr: false,
     loading: () => (
-      <div className="flex h-[420px] items-center justify-center rounded-xl border border-white/[0.08] bg-[#071124] text-sm text-hub-text-muted">
+      <div className="flex h-[340px] items-center justify-center rounded-xl border border-white/[0.08] bg-[#071124] text-sm text-hub-text-muted">
         Loading interactive map...
       </div>
     ),
   },
 );
 
-function fmt12(hhmm: string): string {
-  const [hStr, mStr] = hhmm.split(":");
-  const h = parseInt(hStr, 10);
-  const m = parseInt(mStr ?? "0", 10);
-  const period = h >= 12 ? "PM" : "AM";
-  const hour = h % 12 || 12;
-  return `${hour}:${String(m).padStart(2, "0")} ${period}`;
-}
-
-function getGoogleMapsUrl(locationName: string) {
-  const query = `${locationName}, UC San Diego`;
-  return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(query)}`;
-}
 
 export function CampusPathMap({
   scheduleItems,
   transitionInsights: _transitionInsights,
+  highlightedDossierId,
 }: CampusPathMapProps) {
   void _transitionInsights;
 
@@ -83,65 +72,22 @@ export function CampusPathMap({
 
   return (
     <section className="glass-panel rounded-xl border border-white/[0.08] p-4">
-      <div className="mb-4">
-        <div className="flex flex-wrap items-center gap-2">
-          <h2 className="font-[family-name:var(--font-outfit)] text-lg font-semibold text-hub-text">
-            Campus path map
-          </h2>
-          <span className="rounded-full border border-amber-300/40 bg-amber-300/10 px-2 py-0.5 text-[11px] font-medium text-amber-200">
-            Estimated route
+      <div className="mb-3 flex flex-wrap items-center gap-2">
+        <h2 className="font-[family-name:var(--font-outfit)] text-sm font-semibold text-hub-text">
+          Campus path map
+        </h2>
+        <span className="rounded-full border border-amber-300/40 bg-amber-300/10 px-2 py-0.5 text-[11px] font-medium text-amber-200">
+          Estimated route
+        </span>
+        {plottedItems.some((i) => i.geocode_status === "unresolved") && (
+          <span className="flex items-center gap-1 text-[11px] text-amber-400">
+            <AlertTriangle className="h-3 w-3" aria-hidden />
+            Some pins are approximate
           </span>
-        </div>
-        <p className="mt-1 text-sm text-hub-text-secondary">
-          Sequence markers show the order of your schedule locations.
-        </p>
+        )}
       </div>
 
-      <div className="mt-4">
-        <CampusPathLeafletMap plottedItems={plottedItems} />
-      </div>
-
-      <div className="mt-3">
-        <div className="rounded-xl border border-white/[0.08] bg-hub-bg/30 p-3">
-          <h3 className="text-sm font-semibold text-hub-text">Mapped locations</h3>
-          <div className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-            {plottedItems.map((item, index) => (
-              <div
-                key={`item-${item.id}-${index}`}
-                className="rounded-lg border border-white/[0.08] bg-hub-surface/75 p-2"
-              >
-                <p className="text-sm font-semibold text-hub-text flex items-center gap-1">
-                  {index + 1}. {item.title}
-                  {item.geocode_status === "unresolved" && (
-                    <span title="Location could not be confirmed — pin may be inaccurate" className="text-amber-400">⚠</span>
-                  )}
-                </p>
-                {item.location && (
-                  <p className="text-xs text-hub-text-muted">{item.location}</p>
-                )}
-                {item.days.length > 0 && (
-                  <p className="mt-0.5 text-xs text-hub-text-muted">
-                    {item.days.join(" · ")}
-                  </p>
-                )}
-                {item.start && item.end && (
-                  <p className="mt-0.5 text-xs text-hub-cyan">
-                    {fmt12(item.start)} – {fmt12(item.end)}
-                  </p>
-                )}
-                <a
-                  href={getGoogleMapsUrl(item.buildingDisplayName ?? item.location ?? item.title)}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="mt-2 inline-flex items-center gap-1 text-xs text-hub-cyan hover:underline"
-                >
-                  Open in Google Maps <ExternalLink className="h-3 w-3" aria-hidden />
-                </a>
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
+      <CampusPathLeafletMap plottedItems={plottedItems} highlightedDossierId={highlightedDossierId} />
     </section>
   );
 }

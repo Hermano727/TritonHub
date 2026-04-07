@@ -13,7 +13,11 @@ import {
 } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import {
+  AlertCircle,
+  AlertTriangle,
   CalendarDays,
+  GraduationCap,
+  Info,
   LayoutGrid,
   Maximize2,
   Plus,
@@ -22,6 +26,7 @@ import {
   Undo2,
   X,
 } from "lucide-react";
+import { isExamSection } from "@/lib/mappers/dossiersToScheduleItems";
 import { Alert } from "@/components/ui/Alert";
 import { ClassCard } from "@/components/dashboard/ClassCard";
 import { CampusPathMap } from "@/components/dashboard/CampusPathMap";
@@ -34,6 +39,26 @@ import {
   useScheduleFingerprint,
 } from "@/hooks/useScheduleEditor";
 import type { ClassDossier, ScheduleCommitment, ScheduleEvaluation, ScheduleItem, TransitionInsight } from "@/types/dossier";
+
+/** Mirror CampusPathMap dedup to assign marker numbers to dossiers. */
+function buildDossierMarkerMap(
+  scheduleItems: ScheduleItem[],
+  classes: ClassDossier[],
+): Map<string, number> {
+  const seenKeys = new Set<string>();
+  const result = new Map<string, number>();
+  let counter = 1;
+  for (const item of scheduleItems) {
+    const key = `${item.title}|${item.buildingCode ?? item.location ?? ""}`;
+    if (seenKeys.has(key)) continue;
+    seenKeys.add(key);
+    const dossier = classes.find((c) => item.id.startsWith(c.id + "-"));
+    if (dossier && !result.has(dossier.id)) {
+      result.set(dossier.id, counter++);
+    }
+  }
+  return result;
+}
 
 const COMMITMENT_PRESETS = [
   { label: "Coral", value: "#f97316" },
@@ -107,7 +132,14 @@ export const DossierScheduleWorkspace = forwardRef(function DossierScheduleWorks
   const [mainTab, setMainTab] = useState<MainTab>("dossier");
   const [fullscreenOpen, setFullscreenOpen] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
+  const [hoveredClassId, setHoveredClassId] = useState<string | null>(null);
+  const [selectedClassId, setSelectedClassId] = useState<string | null>(null);
   const formId = useId();
+
+  const dossierMarkerMap = useMemo(
+    () => buildDossierMarkerMap(scheduleItems, classes),
+    [scheduleItems, classes],
+  );
 
   const [newTitle, setNewTitle] = useState("Work");
   const [newDay, setNewDay] = useState(0);
@@ -449,43 +481,247 @@ export const DossierScheduleWorkspace = forwardRef(function DossierScheduleWorks
         </div>
       </div>
 
-      <div className="flex min-h-0 flex-col gap-6">
-        {/* Calendar on top */}
+      {/* ── Mobile: linear stack ── */}
+      <div className="flex min-h-0 flex-col gap-6 lg:hidden">
         <div
           ref={calendarRef}
-          className={mainTab === "dossier" ? "hidden lg:block" : ""}
+          className={mainTab === "dossier" ? "hidden" : ""}
         >
           {calendarNode(78, calendarHeaderActions ? (
             <>{defaultCalendarHeaderActions}{calendarHeaderActions}</>
           ) : defaultCalendarHeaderActions)}
         </div>
 
-        {/* Dossier cards below */}
         <div
-          className={`grid gap-4 sm:grid-cols-2 xl:grid-cols-3 ${
-            mainTab === "schedule" ? "hidden lg:grid" : ""
+          className={`grid gap-4 sm:grid-cols-2 ${
+            mainTab === "schedule" ? "hidden" : ""
           }`}
         >
           {classes.map((c) => (
-            <ClassCard key={c.id} dossier={c} />
+            <ClassCard
+              key={c.id}
+              dossier={c}
+              isSelected={selectedClassId === c.id}
+              onSelect={() => setSelectedClassId((prev) => prev === c.id ? null : c.id)}
+              onHover={() => setHoveredClassId(c.id)}
+              onHoverEnd={() => setHoveredClassId(null)}
+            />
           ))}
         </div>
+
         {scheduleItems.length > 0 ? (
           <motion.div
             initial={{ opacity: 0, y: 16 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.45, delay: 0.1, ease: [0.22, 1, 0.36, 1] }}
-            className={mainTab === "schedule" ? "hidden lg:block" : ""}
+            className={mainTab === "schedule" ? "hidden" : ""}
           >
-            <CampusPathMap
-              scheduleItems={scheduleItems}
-              transitionInsights={transitionInsights}
-            />
+            <CampusPathMap scheduleItems={scheduleItems} transitionInsights={transitionInsights} />
           </motion.div>
         ) : null}
 
-        <div className={mainTab === "schedule" ? "hidden lg:block" : ""}>
+        <div className={mainTab === "schedule" ? "hidden" : ""}>
+          <ExamsPanel classes={classes} />
+        </div>
+
+        <div className={mainTab === "schedule" ? "hidden" : ""}>
           <EvaluatorFooter evaluation={evaluation} />
+        </div>
+      </div>
+
+      {/* ── Desktop: High-Density 50/50 Layout ── */}
+      <div className="hidden lg:block space-y-5">
+
+        {/* ── Full-Width Difficulty Score HUD ── */}
+        <section className="w-full rounded-xl border border-white/[0.08] bg-hub-surface/95 shadow-2xl">
+          <div className="flex items-center justify-between border-b border-white/[0.06] px-4 py-3">
+            <div className="flex items-center gap-2">
+              <h2 className="font-[family-name:var(--font-outfit)] text-sm font-semibold uppercase tracking-widest text-hub-text-muted">
+                Difficulty Score
+              </h2>
+              <HudInfoTooltip text="Commute · density · employment — 1 = easy, 10 = very hard" />
+            </div>
+            <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-400/20 bg-emerald-400/10 px-3 py-1 text-[11px] font-semibold text-emerald-200">
+              {evaluation.trendLabel}
+            </span>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-6 px-4 py-4">
+            {/* Score readout */}
+            <div className="flex items-baseline gap-2">
+              <span
+                className="font-[family-name:var(--font-outfit)] text-5xl font-bold tabular-nums"
+                style={{ color: fitnessScoreColor(evaluation.fitnessScore, evaluation.fitnessMax) }}
+              >
+                {evaluation.fitnessScore.toFixed(1)}
+              </span>
+              <span className="text-sm text-slate-400">/ {evaluation.fitnessMax}</span>
+            </div>
+
+            {/* Category mini-bars */}
+            {(evaluation.categories ?? []).length > 0 && (
+              <div className="flex flex-1 flex-wrap gap-x-6 gap-y-3">
+                {(evaluation.categories ?? []).map((cat) => (
+                  <div key={cat.label} className="min-w-[100px] flex-1">
+                    <div className="flex items-center justify-between gap-2 text-[10px]">
+                      <span className="flex items-center gap-1.5 font-semibold uppercase tracking-wider text-slate-400">
+                        <span
+                          className="h-2 w-2 shrink-0 rounded-full"
+                          style={{ backgroundColor: cat.color }}
+                        />
+                        {cat.label}
+                      </span>
+                      <span className="font-bold tabular-nums" style={{ color: cat.color }}>
+                        {cat.score.toFixed(1)}
+                      </span>
+                    </div>
+                    <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-white/[0.06]">
+                      <div
+                        className="h-full rounded-full transition-all"
+                        style={{
+                          width: `${(cat.score / cat.max) * 100}%`,
+                          backgroundColor: cat.color,
+                          opacity: 0.8,
+                        }}
+                      />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Alert chips */}
+            {evaluation.alerts.length > 0 && (
+              <div className="flex flex-wrap gap-2">
+                {evaluation.alerts.slice(0, 3).map((a) => (
+                  <span
+                    key={a.id}
+                    title={a.detail}
+                    className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[10px] font-semibold ${
+                      a.severity === "critical"
+                        ? "border-hub-danger/25 bg-hub-danger/10 text-hub-danger"
+                        : a.severity === "warning"
+                          ? "border-hub-gold/25 bg-hub-gold/10 text-hub-gold"
+                          : "border-hub-cyan/20 bg-hub-cyan/8 text-hub-cyan"
+                    }`}
+                  >
+                    {a.severity === "critical"
+                      ? <AlertCircle className="h-3 w-3" aria-hidden />
+                      : a.severity === "warning"
+                      ? <AlertTriangle className="h-3 w-3" aria-hidden />
+                      : <Info className="h-3 w-3" aria-hidden />}
+                    {a.title}
+                  </span>
+                ))}
+                {evaluation.alerts.length > 3 && (
+                  <span className="inline-flex items-center rounded-full border border-white/[0.08] px-2.5 py-1 text-[10px] text-slate-400">
+                    +{evaluation.alerts.length - 3} more
+                  </span>
+                )}
+              </div>
+            )}
+          </div>
+
+          {evaluation.recommendation && (
+            <div className="border-t border-white/[0.05] px-4 py-2.5">
+              <p className="text-xs text-slate-400">
+                <span className="font-semibold text-hub-text-secondary">Advisor: </span>
+                {evaluation.recommendation}
+              </p>
+            </div>
+          )}
+        </section>
+
+        {/* ── Exams Panel (Finals / Midterms) ── */}
+        <ExamsPanel classes={classes} />
+
+        {/* ── 50/50 Split ── */}
+        <div className="grid grid-cols-2 gap-8 items-start">
+
+          {/* Left (50%): ClassCard list — scrolls with the page */}
+          <div className="space-y-3 pr-1">
+            {classes.map((c) => (
+              <ClassCard
+                key={c.id}
+                dossier={c}
+                isSelected={selectedClassId === c.id}
+                markerIndex={dossierMarkerMap.get(c.id)}
+                onSelect={() => setSelectedClassId((prev) => prev === c.id ? null : c.id)}
+                onHover={() => setHoveredClassId(c.id)}
+                onHoverEnd={() => setHoveredClassId(null)}
+              />
+            ))}
+          </div>
+
+          {/* Right (50%): Sticky Map + Calendar stack */}
+          <div
+            className="sticky top-4 space-y-4 overflow-y-auto hub-scroll"
+            style={{ maxHeight: "calc(100vh - 6rem)" }}
+          >
+            {/* Campus Map */}
+            {scheduleItems.length > 0 && (
+              <motion.div
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.4, delay: 0.1, ease: [0.22, 1, 0.36, 1] }}
+              >
+                <CampusPathMap
+                  scheduleItems={scheduleItems}
+                  transitionInsights={transitionInsights}
+                  highlightedDossierId={selectedClassId}
+                />
+              </motion.div>
+            )}
+
+            {/* Calendar */}
+            <div className="rounded-xl border border-white/[0.08] bg-hub-surface/90 p-3 shadow-2xl">
+              {scheduleToolbar}
+              <div ref={calendarRef} className="mt-3">
+                <WeeklyCalendar
+                  classes={classes}
+                  commitments={commitments}
+                  onApply={apply}
+                  pxPerHour={62}
+                  hideScheduleHeading={false}
+                  headerActions={calendarHeaderActions ? (
+                    <>{defaultCalendarHeaderActions}{calendarHeaderActions}</>
+                  ) : defaultCalendarHeaderActions}
+                  onBlockDoubleClick={openEditModal}
+                  highlightedDossierId={selectedClassId}
+                />
+              </div>
+              {commitments.length > 0 && (
+                <div className="mt-3 rounded-lg border border-white/[0.06] bg-hub-bg/25 px-3 py-2">
+                  <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">
+                    Your blocks
+                  </p>
+                  <ul className="mt-2 space-y-1.5">
+                    {commitments.map((c) => (
+                      <li
+                        key={c.id}
+                        className="flex items-center justify-between gap-2 text-xs text-hub-text-secondary"
+                      >
+                        <span className="flex min-w-0 items-center gap-2">
+                          <span
+                            className="h-2 w-2 shrink-0 rounded-full"
+                            style={{ backgroundColor: c.color }}
+                          />
+                          <span className="truncate font-medium text-white">{c.title}</span>
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => removeCommitment(c.id)}
+                          className="shrink-0 rounded px-2 py-0.5 text-[10px] text-slate-400 hover:bg-white/5 hover:text-hub-danger"
+                        >
+                          Remove
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+          </div>
         </div>
       </div>
 
@@ -904,3 +1140,83 @@ export const DossierScheduleWorkspace = forwardRef(function DossierScheduleWorks
     </>
   );
 });
+
+// ── Exams Panel ──────────────────────────────────────────────────────────────
+type ExamEntry = {
+  courseCode: string;
+  sectionType: string;
+  days: string;
+  start_time: string;
+  end_time: string;
+  location: string;
+};
+
+function ExamsPanel({ classes }: { classes: import("@/types/dossier").ClassDossier[] }) {
+  const exams: ExamEntry[] = [];
+  for (const c of classes) {
+    for (const m of c.meetings) {
+      if (!isExamSection(m.section_type)) continue;
+      exams.push({
+        courseCode: c.courseCode,
+        sectionType: m.section_type.toUpperCase(),
+        days: m.days,
+        start_time: m.start_time,
+        end_time: m.end_time,
+        location: m.location,
+      });
+    }
+  }
+  if (exams.length === 0) return null;
+
+  return (
+    <section className="rounded-xl border border-white/[0.08] bg-hub-surface/90 px-4 py-3 shadow-sm">
+      <div className="mb-3 flex items-center gap-2">
+        <GraduationCap className="h-4 w-4 text-hub-gold" aria-hidden />
+        <h2 className="text-xs font-semibold uppercase tracking-widest text-hub-text-muted">
+          Exams (not on calendar)
+        </h2>
+      </div>
+      <div className="divide-y divide-white/[0.05]">
+        {exams.map((ex, i) => (
+          <div key={i} className="flex flex-wrap items-center gap-x-4 gap-y-1 py-2 text-xs text-hub-text-secondary">
+            <span className="font-semibold text-hub-text">{ex.courseCode}</span>
+            <span className="rounded bg-hub-gold/10 px-1.5 py-0.5 text-[10px] font-bold text-hub-gold">
+              {ex.sectionType === "FI" ? "Final" : ex.sectionType === "MI" ? "Midterm" : ex.sectionType}
+            </span>
+            <span>{ex.days} · {ex.start_time}–{ex.end_time}</span>
+            {ex.location && <span className="text-hub-text-muted">{ex.location}</span>}
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function HudInfoTooltip({ text }: { text: string }) {
+  const [visible, setVisible] = useState(false);
+  return (
+    <div className="relative inline-flex">
+      <button
+        type="button"
+        onMouseEnter={() => setVisible(true)}
+        onMouseLeave={() => setVisible(false)}
+        className="flex items-center text-slate-400/60 transition hover:text-slate-400"
+        aria-label="Score explanation"
+      >
+        <Info className="h-3.5 w-3.5" />
+      </button>
+      {visible && (
+        <div className="absolute bottom-full left-1/2 z-20 mb-2 w-64 -translate-x-1/2 rounded-lg border border-white/[0.1] bg-hub-surface p-3 text-[11px] leading-relaxed text-slate-400 shadow-xl">
+          {text}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function fitnessScoreColor(score: number, max: number): string {
+  const ratio = score / max;
+  if (ratio <= 0.4) return "#5eead4";
+  if (ratio <= 0.65) return "#e3b12f";
+  return "#ff6b6b";
+}

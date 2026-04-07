@@ -1,4 +1,4 @@
-import type { CourseLogistics } from "@/types/dossier";
+import type { CourseLogistics, FitnessCategory } from "@/types/dossier";
 
 export interface SectionMeeting {
   section_type: string;
@@ -79,6 +79,7 @@ export interface FitAnalysisResult {
   fitness_score: number;
   fitness_max: number;
   trend_label: string;
+  categories?: FitnessCategory[];
   alerts: Array<{ id: string; severity: "critical" | "warning" | "info"; title: string; detail: string }>;
   recommendation: string;
 }

@@ -1,7 +1,8 @@
 "use client";
 
-import { useState, type ReactNode } from "react";
+import { useRef, useState, type ReactNode } from "react";
 import type { ClassDossier, ScheduleCommitment, SectionMeeting } from "@/types/dossier";
+import { isExamSection } from "@/lib/mappers/dossiersToScheduleItems";
 
 const DEFAULT_PX_PER_HOUR = 64;
 
@@ -123,12 +124,14 @@ export interface WeeklyCalendarProps {
   onApply: (next: { classes: ClassDossier[]; commitments: ScheduleCommitment[] }) => void;
   pxPerHour?: number;
   className?: string;
-  /** Shown on the right side of the “Weekly schedule” title (sync, expand, etc.) */
+  /** Shown on the right side of the "Weekly schedule" title (sync, expand, etc.) */
   headerActions?: ReactNode;
   /** Hide the title row (e.g. when the parent already shows a schedule heading). */
   hideScheduleHeading?: boolean;
   /** Called when a block is double-clicked — use to open an edit modal. */
   onBlockDoubleClick?: (block: CourseBlock | CommitmentBlock) => void;
+  /** When set, course blocks matching this dossier ID will glow cyan. */
+  highlightedDossierId?: string | null;
 }
 
 export function WeeklyCalendar({
@@ -140,6 +143,7 @@ export function WeeklyCalendar({
   headerActions,
   hideScheduleHeading = false,
   onBlockDoubleClick,
+  highlightedDossierId,
 }: WeeklyCalendarProps) {
   const pxPerMin = pxPerHour / 60;
   const [dragKey, setDragKey] = useState<string | null>(null);
@@ -149,6 +153,19 @@ export function WeeklyCalendar({
     height: number;
   } | null>(null);
 
+  // Reliable double-click via click-timer (draggable elements can swallow dblclick events)
+  const lastClickRef = useRef<{ key: string; time: number } | null>(null);
+  function handleBlockClick(b: GridBlock) {
+    const now = Date.now();
+    const key = b.blockKey;
+    if (lastClickRef.current?.key === key && now - lastClickRef.current.time < 350) {
+      onBlockDoubleClick?.(b);
+      lastClickRef.current = null;
+    } else {
+      lastClickRef.current = { key, time: now };
+    }
+  }
+
   const blocks: GridBlock[] = [];
   let allStart = Infinity;
   let allEnd = -Infinity;
@@ -156,6 +173,8 @@ export function WeeklyCalendar({
   classes.forEach((dossier, idx) => {
     const color = PALETTE[idx % PALETTE.length];
     dossier.meetings.forEach((meeting, meetingIdx) => {
+      // Finals (FI) and midterms (MI) are displayed in a separate Exams panel
+      if (isExamSection(meeting.section_type)) return;
       const startMin = parseTimeToMinutes(meeting.start_time);
       const endMin = parseTimeToMinutes(meeting.end_time);
       if (startMin < allStart) allStart = startMin;
@@ -412,14 +431,20 @@ export function WeeklyCalendar({
                   .map((b) => {
                     const { top, height } = blockPosition(b);
                     if (b.kind === "course") {
+                      const isHighlighted =
+                        highlightedDossierId != null &&
+                        b.dossierId === highlightedDossierId;
                       return (
                         <div
                           key={b.blockKey}
                           draggable
                           onDragStart={(e) => handleDragStart(e, b.blockKey)}
                           onDragEnd={handleDragEnd}
-                          onDoubleClick={(e) => { e.stopPropagation(); onBlockDoubleClick?.(b); }}
-                          className={`absolute inset-x-0.5 overflow-hidden rounded border ${b.color.border} ${b.color.bg} px-1 py-0.5
+                          onClick={(e) => { e.stopPropagation(); handleBlockClick(b); }}
+                          className={`absolute inset-x-0.5 overflow-hidden rounded border px-1 py-0.5 transition-all duration-200
+                          ${isHighlighted
+                            ? "border-hub-cyan/90 bg-hub-cyan/20 z-10 shadow-[0_0_0_1px_rgba(0,212,255,0.25),0_0_14px_3px_rgba(0,212,255,0.18)]"
+                            : `${b.color.border} ${b.color.bg}`}
                           ${dragKey === b.blockKey ? "cursor-grabbing opacity-40" : "cursor-grab"}`}
                           style={{ top, height }}
                         >
@@ -448,7 +473,7 @@ export function WeeklyCalendar({
                         draggable
                         onDragStart={(e) => handleDragStart(e, b.blockKey)}
                         onDragEnd={handleDragEnd}
-                        onDoubleClick={(e) => { e.stopPropagation(); onBlockDoubleClick?.(b); }}
+                        onClick={(e) => { e.stopPropagation(); handleBlockClick(b); }}
                         className={`absolute inset-x-0.5 overflow-hidden rounded border px-1 py-0.5 shadow-[inset_0_0_0_1px_rgba(255,255,255,0.06)]
                           ${dragKey === b.blockKey ? "cursor-grabbing opacity-40" : "cursor-grab"}`}
                         style={{

@@ -364,6 +364,7 @@ export function CommandCenter() {
               fitnessScore: fitResult.fitness_score,
               fitnessMax: fitResult.fitness_max,
               trendLabel: fitResult.trend_label,
+              categories: fitResult.categories ?? undefined,
               alerts: fitResult.alerts,
               recommendation: fitResult.recommendation,
             };
