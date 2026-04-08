@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from app.auth.deps import get_current_user_access
 from app.db.client import get_supabase_for_access_token
-from app.db.service import (
+from app.db.community import (
     create_community_post,
     create_community_reply,
     get_community_post_with_replies,

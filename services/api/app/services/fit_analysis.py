@@ -7,7 +7,7 @@ from google import genai
 from google.genai import types
 from pydantic import BaseModel
 
-from app.services.course_research import CourseResearchResult
+from app.models.research import CourseResearchResult
 
 
 load_dotenv()

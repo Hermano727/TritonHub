@@ -60,6 +60,27 @@ export const mockDossier: MockDossierPayload = {
           difficulty: 3.8,
           url: null,
         },
+        professor_info_found: true,
+        evidence: [
+          {
+            source: "Reddit Insight",
+            content: "Midterm was exactly like the discussion worksheet combo pack — if you did those you were golden.",
+            url: "https://reddit.com/r/ucsd",
+            relevance_score: 0.92,
+          },
+          {
+            source: "Course Page",
+            content: "Lectures are dense but the podcasts are a lifesaver for review before exams.",
+            url: "https://ucsd.edu",
+            relevance_score: 0.78,
+          },
+          {
+            source: "RMP",
+            content: "Tough exams but generous curve if you show work on partial credit.",
+            url: "https://ratemyprofessors.com",
+            relevance_score: 0.65,
+          },
+        ],
       },
       rawQuotes: [
         {
@@ -120,6 +141,21 @@ export const mockDossier: MockDossierPayload = {
           difficulty: 4.1,
           url: null,
         },
+        professor_info_found: true,
+        evidence: [
+          {
+            source: "Reddit Insight",
+            content: "Projects take longer than the writeup suggests — budget full weekends for P2 and P3.",
+            url: "https://reddit.com/r/ucsd",
+            relevance_score: 0.88,
+          },
+          {
+            source: "Syllabus Snippet",
+            content: "Late submissions lose 10% per day. Autograder runs every push; final score is the last passing run before the deadline.",
+            url: "https://ucsd.edu",
+            relevance_score: 0.83,
+          },
+        ],
       },
       rawQuotes: [
         {

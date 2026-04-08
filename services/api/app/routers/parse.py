@@ -1,7 +1,8 @@
 from fastapi import APIRouter, HTTPException, UploadFile
 
 from app.models.course_parse import ParseScreenshotResponse
-from app.services.course_research import BatchResearchResponse, research_courses
+from app.models.research import BatchResearchResponse
+from app.services.course_research import research_courses
 from app.services.screenshot_parser import parse_schedule_image
 
 router = APIRouter()

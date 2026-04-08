@@ -84,24 +84,17 @@ export function CampusPathMap({
   const plottedItems = [...plottedMap.values()];
 
 
-  return (
-    <section className="glass-panel rounded-xl border border-white/[0.08] p-4">
-      <div className="mb-3 flex flex-wrap items-center gap-2">
-        <h2 className="font-[family-name:var(--font-outfit)] text-sm font-semibold text-hub-text">
-          Campus path map
-        </h2>
-        <span className="rounded-full border border-amber-300/40 bg-amber-300/10 px-2 py-0.5 text-[11px] font-medium text-amber-200">
-          Estimated route
-        </span>
-        {plottedItems.some((i) => i.geocode_status === "unresolved") && (
-          <span className="flex items-center gap-1 text-[11px] text-amber-400">
-            <AlertTriangle className="h-3 w-3" aria-hidden />
-            Some pins are approximate
-          </span>
-        )}
-      </div>
+  const hasUnresolved = plottedItems.some((i) => i.geocode_status === "unresolved");
 
+  return (
+    <section className="glass-panel overflow-hidden rounded-xl border border-white/[0.08]">
       <CampusPathLeafletMap plottedItems={plottedItems} highlightedDossierId={highlightedDossierId} />
+      {hasUnresolved && (
+        <div className="flex items-center gap-1.5 border-t border-white/[0.06] px-3 py-1.5">
+          <AlertTriangle className="h-3 w-3 shrink-0 text-amber-400" aria-hidden />
+          <span className="text-[10px] text-amber-400/80">Some building locations are approximate</span>
+        </div>
+      )}
     </section>
   );
 }

@@ -1,19 +1,15 @@
 "use client";
 
-import { useState } from "react";
-import { AnimatePresence, motion } from "framer-motion";
+import { motion } from "framer-motion";
 import {
   BookOpen,
   ExternalLink,
-  Eye,
-  HelpCircle,
-  MessageSquare,
+  Info,
   RotateCcw,
   Star,
-  X,
   Zap,
 } from "lucide-react";
-import type { ClassDossier, CourseLogistics } from "@/types/dossier";
+import type { ClassDossier, CourseLogistics, EvidenceItem } from "@/types/dossier";
 import { ConflictBadge } from "@/components/dashboard/ConflictBadge";
 import { getSunsetSummary } from "@/lib/mappers/courseEntryToDossier";
 import { isExamSection } from "@/lib/mappers/dossiersToScheduleItems";
@@ -23,8 +19,6 @@ function isDossierRemoteOnly(dossier: ClassDossier): boolean {
   return regular.length > 0 && regular.every((m) => m.geocode_status === "remote");
 }
 
-type DossierModalTab = "summary" | "reddit" | "grades" | "syllabus";
-
 type ClassCardProps = {
   dossier: ClassDossier;
   isSelected?: boolean;
@@ -32,6 +26,7 @@ type ClassCardProps = {
   onSelect?: () => void;
   onHover?: () => void;
   onHoverEnd?: () => void;
+  onOpenDashboard?: () => void;
 };
 
 // ── Confidence bar color based on percentage ──────────────────────────────────
@@ -102,7 +97,7 @@ function AttributeChips({ logistics }: { logistics: CourseLogistics | undefined 
       )}
       {attendance.length > 0 && (
         <div className="flex flex-wrap items-center gap-1.5">
-          <span className="w-16 shrink-0 text-[9px] font-semibold uppercase tracking-wider text-hub-text-muted">Attend.</span>
+          <span className="w-20 shrink-0 text-[9px] font-semibold uppercase tracking-wider text-hub-text-muted">Attendance</span>
           {attendance.map((c) => <Chip key={c.label} chip={c} />)}
         </div>
       )}
@@ -147,6 +142,124 @@ function EmptyFeedback({ label }: { label: string }) {
   );
 }
 
+// ── Evidence card with clickable source link ──────────────────────────────────
+const SOURCE_COLORS: Record<string, string> = {
+  reddit: "text-orange-400",
+  syllabus: "text-emerald-400",
+  course: "text-hub-cyan",
+  rmp: "text-hub-gold",
+};
+
+function sourceColor(source: string): string {
+  const lower = source.toLowerCase();
+  if (lower.includes("reddit")) return SOURCE_COLORS.reddit;
+  if (lower.includes("syllabus")) return SOURCE_COLORS.syllabus;
+  if (lower.includes("course") || lower.includes("prof")) return SOURCE_COLORS.course;
+  if (lower.includes("rmp") || lower.includes("rate")) return SOURCE_COLORS.rmp;
+  return "text-hub-text-muted";
+}
+
+function EvidenceCard({ item }: { item: EvidenceItem }) {
+  return (
+    <blockquote className="rounded-xl border border-white/[0.06] bg-hub-bg/30 p-4">
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <p className={`text-[10px] font-semibold uppercase tracking-wide ${sourceColor(item.source)}`}>
+          {item.source}
+        </p>
+        {item.url && (
+          <a
+            href={item.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={(e) => e.stopPropagation()}
+            className="flex items-center gap-1 rounded-md border border-white/[0.08] bg-white/[0.03] px-2 py-0.5 text-[10px] text-hub-text-muted transition hover:border-hub-cyan/40 hover:text-hub-cyan"
+          >
+            Source <ExternalLink className="h-2.5 w-2.5" />
+          </a>
+        )}
+      </div>
+      <p className="text-sm leading-relaxed text-hub-text-secondary">
+        &ldquo;{sanitizeDashes(item.content)}&rdquo;
+      </p>
+      {item.relevance_score != null && (
+        <div className="mt-2 flex items-center gap-1.5">
+          <div className="h-0.5 flex-1 overflow-hidden rounded-full bg-hub-bg/80">
+            <div
+              className="h-full rounded-full bg-hub-cyan/40"
+              style={{ width: `${Math.round(item.relevance_score * 100)}%` }}
+            />
+          </div>
+          <span className="text-[9px] text-hub-text-muted">
+            {Math.round(item.relevance_score * 100)}% relevant
+          </span>
+        </div>
+      )}
+    </blockquote>
+  );
+}
+
+// ── Grade breakdown strip ──────────────────────────────────────────────────────
+function GradeBreakdownStrip({ breakdown }: { breakdown: string | null | undefined }) {
+  if (!breakdown) {
+    return (
+      <div className="flex items-center gap-1.5 rounded-lg border border-dashed border-white/[0.06] px-3 py-2">
+        <Info className="h-3 w-3 shrink-0 text-hub-text-muted/50" />
+        <span className="text-[10px] text-hub-text-muted">Course logistics not found</span>
+      </div>
+    );
+  }
+
+  // Parse "Homework 20%, Midterm 30%, Final 50%" into segments
+  const segments = breakdown
+    .split(/[,;]/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+
+  return (
+    <div className="rounded-lg border border-white/[0.06] bg-hub-bg/20 px-3 py-2">
+      <p className="mb-1.5 text-[9px] font-semibold uppercase tracking-wider text-hub-text-muted">
+        Grading
+      </p>
+      <div className="flex flex-wrap gap-x-3 gap-y-1">
+        {segments.map((seg, i) => (
+          <span key={i} className="text-[11px] text-hub-text-secondary">
+            {seg}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ── Inline evidence quote for card view ───────────────────────────────────────
+function InlineQuote({ item }: { item: EvidenceItem }) {
+  const truncated =
+    item.content.length > 110 ? item.content.slice(0, 108).trimEnd() + "…" : item.content;
+
+  return (
+    <div className="flex items-start gap-2 rounded-lg border border-white/[0.05] bg-hub-bg/20 px-2.5 py-2">
+      <span className={`mt-px text-[10px] font-bold ${sourceColor(item.source)}`}>
+        &ldquo;
+      </span>
+      <p className="flex-1 text-[11px] leading-relaxed text-hub-text-secondary">
+        {sanitizeDashes(truncated)}
+      </p>
+      {item.url && (
+        <a
+          href={item.url}
+          target="_blank"
+          rel="noopener noreferrer"
+          onClick={(e) => e.stopPropagation()}
+          title={item.source}
+          className="mt-0.5 shrink-0 text-hub-text-muted/60 transition hover:text-hub-cyan"
+        >
+          <ExternalLink className="h-3 w-3" />
+        </a>
+      )}
+    </div>
+  );
+}
+
 // ── SVG mini histogram for grade distribution ─────────────────────────────────
 function GradeHistogram({
   gradeCounts,
@@ -167,44 +280,59 @@ function GradeHistogram({
   if (segments.length === 0) return null;
 
   const maxCount = Math.max(...segments.map((s) => s.count));
-  const BAR_H = 72;
-  const BAR_W = 14;
-  const GAP = 3;
-  const LABEL_H = 14;
+  const BAR_H = 110;
+  const BAR_W = 20;
+  const GAP = 5;
+  const PCT_LABEL_H = 14;  // space above bar for % label
+  const GRADE_LABEL_H = 16; // space below bar for grade label
   const svgW = segments.length * (BAR_W + GAP) - GAP;
-  const svgH = BAR_H + LABEL_H + 4;
+  const svgH = PCT_LABEL_H + BAR_H + GRADE_LABEL_H;
 
   return (
     <svg
       viewBox={`0 0 ${svgW} ${svgH}`}
       className="w-full"
-      style={{ maxHeight: 90 }}
       aria-label="Grade distribution histogram"
     >
       {segments.map((seg, i) => {
-        const barH = Math.max((seg.count / maxCount) * BAR_H, 2);
+        const barH = Math.max((seg.count / maxCount) * BAR_H, 3);
         const x = i * (BAR_W + GAP);
-        const y = BAR_H - barH;
-        const pct = ((seg.count / sampleSize) * 100).toFixed(0);
+        const barY = PCT_LABEL_H + (BAR_H - barH);
+        const pct = Math.round((seg.count / sampleSize) * 100);
         return (
           <g key={seg.grade}>
+            {/* Percentage label above bar — only show if ≥5% to avoid clutter */}
+            {pct >= 5 && (
+              <text
+                x={x + BAR_W / 2}
+                y={barY - 3}
+                textAnchor="middle"
+                fontSize={7}
+                fontWeight={600}
+                fill={seg.color}
+                fillOpacity={0.9}
+              >
+                {pct}%
+              </text>
+            )}
             <rect
               x={x}
-              y={y}
+              y={barY}
               width={BAR_W}
               height={barH}
               fill={seg.color}
               fillOpacity={0.85}
-              rx={2}
+              rx={3}
             >
-              <title>{seg.grade}: {pct}% ({seg.count})</title>
+              <title>{seg.grade}: {pct}% ({seg.count} students)</title>
             </rect>
+            {/* Grade label below bar */}
             <text
               x={x + BAR_W / 2}
-              y={svgH - 2}
+              y={svgH - 3}
               textAnchor="middle"
-              fontSize={7}
-              fill="rgba(148,163,184,0.8)"
+              fontSize={8}
+              fill="rgba(148,163,184,0.9)"
             >
               {seg.grade}
             </text>
@@ -223,10 +351,8 @@ export function ClassCard({
   onSelect,
   onHover,
   onHoverEnd,
+  onOpenDashboard,
 }: ClassCardProps) {
-  const [showConfidenceInfo, setShowConfidenceInfo] = useState(false);
-  const [modalOpen, setModalOpen] = useState(false);
-  const [modalTab, setModalTab] = useState<DossierModalTab>("summary");
 
   const rmp = dossier.logistics?.rate_my_professor;
   const sunsetSummary = getSunsetSummary(dossier.sunsetGradeDistribution);
@@ -255,23 +381,16 @@ export function ClassCard({
       rmp.difficulty != null ||
       rmp.would_take_again_percent != null);
 
-  const redditQuotes = dossier.rawQuotes.filter(
-    (q) => q.source.toLowerCase().includes("reddit"),
+  // Evidence items sorted by relevance score descending
+  const allEvidence = [...(dossier.logistics?.evidence ?? [])].sort(
+    (a, b) => (b.relevance_score ?? 0) - (a.relevance_score ?? 0),
   );
-  const syllabusQuotes = dossier.rawQuotes.filter(
-    (q) =>
-      q.source.toLowerCase().includes("syllabus") ||
-      q.source.toLowerCase().includes("course page") ||
-      q.source.toLowerCase().includes("prof"),
-  );
+  const topEvidence = allEvidence[0] ?? null;
+  const professorInfoFound = dossier.logistics?.professor_info_found !== false;
+  const hasAnyEvidence = allEvidence.length > 0;
 
   const confColor = confidenceColor(dossier.confidencePercent);
   const confGlow = confidenceGlow(dossier.confidencePercent);
-
-  function openModal(tab: DossierModalTab = "summary") {
-    setModalTab(tab);
-    setModalOpen(true);
-  }
 
   return (
     <>
@@ -291,7 +410,7 @@ export function ClassCard({
         <header className="border-b border-white/[0.06] pb-3">
           <div className="flex items-start justify-between gap-2">
             <div className="min-w-0 flex-1">
-              <p className="text-[10px] font-medium uppercase tracking-[0.12em] text-hub-text-muted">
+              <p className="text-[10px] font-medium uppercase tracking-[0.12em] text-hub-text">
                 Course
               </p>
               <h3 className="mt-0.5 flex flex-wrap items-baseline gap-1.5 font-[family-name:var(--font-outfit)] text-base font-semibold tracking-tight text-hub-text">
@@ -331,13 +450,11 @@ export function ClassCard({
                   type="button"
                   onClick={(e) => {
                     e.stopPropagation();
-                    openModal("summary");
+                    onOpenDashboard?.();
                   }}
-                  title="View Full Dossier"
-                  className="flex items-center gap-1 rounded-lg border border-white/[0.08] bg-hub-bg/40 px-2 py-1.5 text-[10px] font-medium text-hub-text-muted transition hover:border-hub-cyan/30 hover:text-hub-cyan"
+                  className="flex items-center gap-1.5 rounded-lg border border-hub-cyan/30 bg-hub-cyan/10 px-3 py-1.5 text-xs font-semibold text-hub-cyan transition hover:bg-hub-cyan/20 hover:border-hub-cyan/50"
                 >
-                  <Eye className="h-3.5 w-3.5" />
-                  <span className="hidden sm:inline">Dossier</span>
+                  Course Details
                 </button>
               </div>
             </div>
@@ -348,521 +465,121 @@ export function ClassCard({
           {/* Attribute chips: Payments / Attendance */}
           <AttributeChips logistics={dossier.logistics} />
 
-          {/* Grade histogram (full-width, replaces the old tiny strip) */}
-          {sunsetSampleSize > 0 && Object.keys(sunsetSummary?.grade_counts ?? {}).length > 0 && (
-            <div className="rounded-lg border border-white/[0.05] bg-hub-bg/30 px-2 pt-2 pb-1">
-              <p className="mb-1 text-[9px] font-semibold uppercase tracking-wider text-hub-text-muted">
-                Grade dist. · {sunsetSampleSize} students
-              </p>
-              <GradeHistogram
-                gradeCounts={sunsetSummary?.grade_counts ?? {}}
-                sampleSize={sunsetSampleSize}
-              />
+          {/* Quick stats row — hero metrics */}
+          {(hasRmp || hasSunsetSummary) && (
+            <div className="flex items-center gap-3 rounded-lg border border-white/[0.06] bg-hub-bg/30 px-3 py-2.5">
+              {hasRmp && rmp.rating != null && (
+                <div className="flex flex-col items-center gap-0.5 min-w-[44px]">
+                  <div className="flex items-center gap-1">
+                    <Star className="h-3.5 w-3.5 text-hub-gold" fill="currentColor" />
+                    <span className="text-base font-bold text-hub-text tabular-nums">
+                      {rmp.rating.toFixed(1)}
+                    </span>
+                  </div>
+                  <span className="text-[9px] uppercase tracking-wide text-hub-text-muted">Rating</span>
+                </div>
+              )}
+              {hasRmp && rmp.difficulty != null && (
+                <>
+                  <div className="h-6 w-px bg-white/[0.08]" />
+                  <div className="flex flex-col items-center gap-0.5 min-w-[44px]">
+                    <div className="flex items-center gap-1">
+                      <Zap className="h-3.5 w-3.5 text-amber-400" />
+                      <span className="text-base font-bold text-hub-text tabular-nums">
+                        {rmp.difficulty.toFixed(1)}
+                      </span>
+                    </div>
+                    <span className="text-[9px] uppercase tracking-wide text-hub-text-muted">Difficulty</span>
+                  </div>
+                </>
+              )}
+              {hasRmp && rmp.would_take_again_percent != null && (
+                <>
+                  <div className="h-6 w-px bg-white/[0.08]" />
+                  <div className="flex flex-col items-center gap-0.5 min-w-[44px]">
+                    <div className="flex items-center gap-1">
+                      <RotateCcw className="h-3 w-3 text-emerald-400" />
+                      <span className="text-base font-bold text-hub-text tabular-nums">
+                        {Math.round(rmp.would_take_again_percent)}%
+                      </span>
+                    </div>
+                    <span className="text-[9px] uppercase tracking-wide text-hub-text-muted">Retake</span>
+                  </div>
+                </>
+              )}
+              {hasSunsetSummary && sunsetSummary?.average_gpa != null && (
+                <>
+                  <div className="h-6 w-px bg-white/[0.08]" />
+                  <div className="ml-auto flex flex-col items-center gap-0.5 min-w-[44px]">
+                    <span className="text-base font-bold text-hub-cyan tabular-nums">
+                      {sunsetSummary.average_gpa}
+                    </span>
+                    <span className="text-[9px] uppercase tracking-wide text-hub-text-muted">
+                      {dossier.sunsetGradeDistribution?.is_cross_course_fallback ? "Other GPA*" : "Avg GPA"}
+                    </span>
+                  </div>
+                </>
+              )}
             </div>
           )}
 
-          {/* Confidence bar with glow */}
-          <div>
-            <div className="mb-1 flex items-center justify-between gap-2 text-[10px] text-hub-text-muted">
-              <div className="flex items-center gap-1">
-                <span>Data confidence</span>
-                <div className="relative">
-                  <button
-                    type="button"
-                    onMouseEnter={(e) => {
-                      e.stopPropagation();
-                      setShowConfidenceInfo(true);
-                    }}
-                    onMouseLeave={() => setShowConfidenceInfo(false)}
-                    onClick={(e) => e.stopPropagation()}
-                    className="flex items-center text-hub-text-muted/50 transition hover:text-hub-text-muted"
-                    aria-label="How is data confidence calculated?"
-                  >
-                    <HelpCircle className="h-3 w-3" />
-                  </button>
-                  {showConfidenceInfo && (
-                    <div className="absolute bottom-full left-1/2 z-20 mb-2 w-56 -translate-x-1/2 rounded-lg border border-white/[0.12] bg-hub-surface p-3 text-[11px] leading-relaxed text-hub-text-secondary shadow-xl">
-                      <p className="mb-1 font-semibold text-hub-text">
-                        About this score
-                      </p>
-                      <p>
-                        Weighted average of syllabus, registrar records, SET
-                        surveys, and community sources like Reddit and RMP.
-                      </p>
-                    </div>
-                  )}
-                </div>
-              </div>
-              <span
-                className="font-[family-name:var(--font-jetbrains-mono)] font-semibold tabular-nums"
-                style={{ color: confColor }}
-              >
-                {dossier.confidencePercent}%
-              </span>
-            </div>
-            <div className="h-1.5 overflow-hidden rounded-full bg-hub-bg/80">
-              <div
-                className="h-full rounded-full transition-all"
-                style={{
-                  width: `${dossier.confidencePercent}%`,
-                  backgroundColor: confColor,
-                  boxShadow: confGlow,
-                }}
-              />
-            </div>
-          </div>
+          {/* Grade breakdown / course logistics strip */}
+          {dossier.logistics != null && (
+            <GradeBreakdownStrip breakdown={dossier.logistics.grade_breakdown} />
+          )}
 
-          {/* Quick stats row */}
-          <div className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-lg border border-white/[0.06] bg-hub-bg/30 px-3 py-2">
-            {hasRmp && rmp.rating != null && (
-              <div className="flex items-center gap-1.5">
-                <Star className="h-3 w-3 text-hub-gold" fill="currentColor" />
-                <span className="text-sm font-semibold text-hub-text">
-                  {rmp.rating.toFixed(1)}
-                </span>
-                <span className="text-[10px] text-hub-text-muted">/5 RMP</span>
-              </div>
-            )}
-            {hasRmp && rmp.difficulty != null && (
-              <div className="flex items-center gap-1.5">
-                <Zap className="h-3 w-3 text-orange-400" />
-                <span className="text-sm font-semibold text-hub-text">
-                  {rmp.difficulty.toFixed(1)}
-                </span>
-                <span className="text-[10px] text-hub-text-muted">diff</span>
-              </div>
-            )}
-            {hasRmp && rmp.would_take_again_percent != null && (
-              <div className="flex items-center gap-1.5">
-                <RotateCcw className="h-3 w-3 text-emerald-400" />
-                <span className="text-sm font-semibold text-hub-text">
-                  {Math.round(rmp.would_take_again_percent)}%
-                </span>
-                <span className="text-[10px] text-hub-text-muted">retake</span>
-              </div>
-            )}
-            {hasSunsetSummary && sunsetSummary?.average_gpa != null && (
-              <div className="ml-auto flex items-center gap-1">
-                <span className="text-[10px] text-hub-text-muted">Avg GPA</span>
-                <span className="text-sm font-semibold text-hub-cyan">
-                  {sunsetSummary.average_gpa}
-                </span>
-              </div>
-            )}
-          </div>
+          {/* No professor info notice */}
+          {!professorInfoFound && (
+            <div className="flex items-start gap-2 rounded-lg border border-amber-500/20 bg-amber-900/10 px-3 py-2">
+              <Info className="mt-0.5 h-3 w-3 shrink-0 text-amber-400/70" />
+              <p className="text-[11px] leading-relaxed text-amber-300/70">
+                No specific professor info found — showing general course & faculty overview below.
+              </p>
+            </div>
+          )}
 
-          {/* TLDR */}
-          <p className="text-xs leading-relaxed text-hub-text-secondary line-clamp-2">
-            {dossier.tldr}
-          </p>
+          {/* Cross-course SunSET fallback notice */}
+          {dossier.sunsetGradeDistribution?.is_cross_course_fallback && (
+            <div className="flex items-start gap-2 rounded-lg border border-amber-500/15 bg-amber-900/8 px-3 py-2">
+              <Info className="mt-0.5 h-3 w-3 shrink-0 text-amber-400/60" />
+              <p className="text-[10px] leading-relaxed text-amber-300/60">
+                Grade data from{" "}
+                <span className="font-semibold">
+                  {dossier.sunsetGradeDistribution.source_course_code ?? "another course"}
+                </span>{" "}
+                — {dossier.professorName} has not taught {dossier.courseCode} before.
+              </p>
+            </div>
+          )}
+
+          {/* TLDR / student sentiment */}
+          {dossier.tldr && (
+            <p className="text-xs leading-relaxed text-hub-text-secondary line-clamp-2">
+              {dossier.tldr}
+            </p>
+          )}
+
+          {/* Top evidence quote with source link */}
+          {topEvidence && (
+            <InlineQuote item={topEvidence} />
+          )}
+
+          {/* "Open Insights" nudge if evidence available */}
+          {hasAnyEvidence && allEvidence.length > 1 && (
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); onOpenDashboard?.(); }}
+              className="flex items-center gap-1 text-[10px] text-hub-cyan/60 transition hover:text-hub-cyan"
+            >
+              <BookOpen className="h-3 w-3" />
+              {allEvidence.length - 1} more source{allEvidence.length > 2 ? "s" : ""} →
+            </button>
+          )}
 
           {dossier.conflict ? <ConflictBadge conflict={dossier.conflict} /> : null}
-
-          {/* Actions row */}
-          <div className="flex items-center gap-2 border-t border-white/[0.05] pt-2">
-            {dossier.rawQuotes.length > 0 && (
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  openModal("reddit");
-                }}
-                className="inline-flex items-center gap-1.5 rounded-lg border border-white/[0.08] bg-hub-bg/40 px-2.5 py-1.5 text-[11px] font-medium text-hub-text-secondary transition hover:border-purple-400/30 hover:text-purple-300"
-              >
-                <MessageSquare className="h-3 w-3" />
-                Raw Feedback
-              </button>
-            )}
-            {hasSunsetSummary && (
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  openModal("grades");
-                }}
-                className="inline-flex items-center gap-1.5 rounded-lg border border-white/[0.08] bg-hub-bg/40 px-2.5 py-1.5 text-[11px] font-medium text-hub-text-secondary transition hover:border-hub-cyan/30 hover:text-hub-cyan"
-              >
-                <BookOpen className="h-3 w-3" />
-                Grades
-              </button>
-            )}
-            {rmp?.url && (
-              <a
-                href={rmp.url}
-                target="_blank"
-                rel="noopener noreferrer"
-                onClick={(e) => e.stopPropagation()}
-                className="ml-auto inline-flex items-center gap-1 text-[10px] text-hub-cyan/60 hover:text-hub-cyan"
-              >
-                RMP <ExternalLink className="h-2.5 w-2.5" />
-              </a>
-            )}
-          </div>
         </div>
       </motion.article>
 
-      {/* ── Dossier Deep-Dive Modal ── */}
-      <AnimatePresence>
-        {modalOpen && (
-          <motion.div
-            key="dossier-modal-backdrop"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.18 }}
-            className="fixed inset-0 z-[70] flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm"
-            onClick={() => setModalOpen(false)}
-          >
-            <motion.div
-              key="dossier-modal"
-              initial={{ y: 20, opacity: 0, scale: 0.97 }}
-              animate={{ y: 0, opacity: 1, scale: 1 }}
-              exit={{ y: 12, opacity: 0, scale: 0.97 }}
-              transition={{ type: "spring", stiffness: 380, damping: 32 }}
-              onClick={(e) => e.stopPropagation()}
-              className="flex w-full max-w-2xl max-h-[85vh] flex-col overflow-hidden rounded-2xl border border-white/[0.1] bg-hub-surface shadow-2xl shadow-black/60"
-            >
-              {/* Modal Header */}
-              <div className="flex items-start justify-between gap-4 border-b border-white/[0.08] px-5 py-4">
-                <div className="min-w-0">
-                  <div className="flex items-center gap-2">
-                    <span className="flex h-8 w-8 items-center justify-center rounded-full border border-hub-cyan/30 bg-hub-cyan/10 text-xs font-bold text-hub-cyan">
-                      {dossier.professorInitials}
-                    </span>
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <p className="font-[family-name:var(--font-outfit)] text-base font-semibold text-hub-text">
-                          {dossier.courseCode}
-                        </p>
-                        {markerIndex != null ? (
-                          <span className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-hub-cyan/40 bg-hub-cyan/10 text-[10px] font-bold text-hub-cyan">
-                            {markerIndex}
-                          </span>
-                        ) : isDossierRemoteOnly(dossier) ? (
-                          <span className="inline-flex items-center rounded-full border border-purple-400/35 bg-purple-400/10 px-1.5 py-0 text-[9px] font-semibold uppercase tracking-wide text-purple-300 leading-5">
-                            Remote
-                          </span>
-                        ) : null}
-                      </div>
-                      <p className="text-xs text-hub-text-muted">
-                        {dossier.courseTitle} · {dossier.professorName}
-                      </p>
-                    </div>
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setModalOpen(false)}
-                  className="shrink-0 rounded-lg p-1.5 text-hub-text-muted hover:bg-white/5 hover:text-hub-text"
-                >
-                  <X className="h-4 w-4" />
-                </button>
-              </div>
-
-              {/* Modal Tabs */}
-              <div className="flex border-b border-white/[0.06] px-5">
-                {(
-                  [
-                    { key: "summary", label: "Summary" },
-                    { key: "reddit", label: "Reddit Insights" },
-                    { key: "grades", label: "Grade Distributions" },
-                    { key: "syllabus", label: "Syllabus Quotes" },
-                  ] as { key: DossierModalTab; label: string }[]
-                ).map((t) => (
-                  <button
-                    key={t.key}
-                    type="button"
-                    onClick={() => setModalTab(t.key)}
-                    className={`relative mr-4 py-3 text-xs font-semibold transition ${
-                      modalTab === t.key
-                        ? "text-hub-cyan after:absolute after:bottom-0 after:left-0 after:right-0 after:h-[2px] after:rounded-full after:bg-hub-cyan"
-                        : "text-hub-text-muted hover:text-hub-text-secondary"
-                    }`}
-                  >
-                    {t.label}
-                  </button>
-                ))}
-              </div>
-
-              {/* Modal Body */}
-              <div className="flex-1 overflow-y-auto hub-scroll px-5 py-4">
-                {modalTab === "summary" && (
-                  <div className="space-y-4">
-                    <AttributeChips logistics={dossier.logistics} />
-
-                    {hasRmp && (
-                      <div className="rounded-xl border border-white/[0.06] bg-hub-bg/30 p-4">
-                        <p className="mb-3 text-[10px] font-semibold uppercase tracking-wider text-hub-text-muted">
-                          Prof. Ratings
-                        </p>
-                        <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
-                          {rmp.rating != null && (
-                            <div className="flex items-center gap-2">
-                              <Star
-                                className="h-4 w-4 text-hub-gold"
-                                fill="currentColor"
-                              />
-                              <span className="text-lg font-bold text-hub-text">
-                                {rmp.rating.toFixed(1)}
-                              </span>
-                              <span className="text-xs text-hub-text-muted">
-                                / 5
-                              </span>
-                            </div>
-                          )}
-                          {rmp.difficulty != null && (
-                            <div className="flex items-center gap-2">
-                              <Zap className="h-4 w-4 text-orange-400" />
-                              <span className="text-lg font-bold text-hub-text">
-                                {rmp.difficulty.toFixed(1)}
-                              </span>
-                              <span className="text-xs text-hub-text-muted">
-                                difficulty
-                              </span>
-                            </div>
-                          )}
-                          {rmp.would_take_again_percent != null && (
-                            <div className="flex items-center gap-2">
-                              <RotateCcw className="h-4 w-4 text-emerald-400" />
-                              <span className="text-lg font-bold text-hub-text">
-                                {Math.round(rmp.would_take_again_percent)}%
-                              </span>
-                              <span className="text-xs text-hub-text-muted">
-                                would retake
-                              </span>
-                            </div>
-                          )}
-                        </div>
-                        <div className="mt-3 flex flex-wrap gap-2">
-                          {rmp.url && (
-                            <a
-                              href={rmp.url}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="inline-flex items-center gap-1 text-xs text-hub-cyan hover:underline"
-                            >
-                              RateMyProfessors{" "}
-                              <ExternalLink className="h-3 w-3" />
-                            </a>
-                          )}
-                          {dossier.logistics?.course_webpage_url && (
-                            <a
-                              href={dossier.logistics.course_webpage_url}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="inline-flex items-center gap-1 text-xs text-hub-cyan hover:underline"
-                            >
-                              Course page <ExternalLink className="h-3 w-3" />
-                            </a>
-                          )}
-                        </div>
-                      </div>
-                    )}
-
-                    <div className="rounded-xl border border-white/[0.06] bg-hub-bg/35 p-4">
-                      <p className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-hub-cyan">
-                        Overview
-                      </p>
-                      <p className="text-sm leading-relaxed text-hub-text-secondary">
-                        {dossier.tldr}
-                      </p>
-                    </div>
-
-                    {dossier.condensedSummary.length > 0 && (
-                      <div>
-                        <p className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-hub-text-muted">
-                          Logistics
-                        </p>
-                        <ul className="space-y-1.5">
-                          {dossier.condensedSummary.map((line, i) => (
-                            <li
-                              key={i}
-                              className="flex items-start gap-2 text-sm text-hub-text-secondary"
-                            >
-                              <span
-                                className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-white/[0.12]"
-                                aria-hidden
-                              />
-                              <span>{sanitizeDashes(line)}</span>
-                            </li>
-                          ))}
-                        </ul>
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                {modalTab === "reddit" && (
-                  <div className="space-y-3">
-                    {redditQuotes.length > 0 ? (
-                      redditQuotes.map((q) => <SourceCard key={q.id} quote={q} />)
-                    ) : dossier.rawQuotes.length > 0 ? (
-                      // Non-reddit quotes available — show those as fallback
-                      dossier.rawQuotes.map((q) => <SourceCard key={q.id} quote={q} />)
-                    ) : dossier.logistics != null ? (
-                      // Research ran but no reddit posts were found
-                      <EmptyFeedback label="No Reddit posts found for this course." />
-                    ) : (
-                      // Research hasn't run yet — show loading state
-                      <>
-                        <p className="mb-3 text-[11px] text-hub-text-muted italic">
-                          Scraping Reddit — check back shortly.
-                        </p>
-                        <SkeletonSourceCard />
-                        <SkeletonSourceCard />
-                        <SkeletonSourceCard />
-                      </>
-                    )}
-                  </div>
-                )}
-
-                {modalTab === "grades" && (
-                  <div className="space-y-4">
-                    {hasSunsetSummary ? (
-                      <>
-                        {/* Histogram — top of grades tab */}
-                        {sunsetSampleSize > 0 &&
-                          Object.keys(sunsetSummary?.grade_counts ?? {}).length > 0 && (
-                            <div className="rounded-xl border border-white/[0.06] bg-hub-bg/30 p-4">
-                              <p className="mb-3 text-[10px] font-semibold uppercase tracking-wider text-hub-text-muted">
-                                Grade distribution
-                              </p>
-                              <GradeHistogram
-                                gradeCounts={sunsetSummary?.grade_counts ?? {}}
-                                sampleSize={sunsetSampleSize}
-                              />
-                            </div>
-                          )}
-
-                        {/* GPA headline */}
-                        <div className="flex flex-wrap items-center gap-4 rounded-xl border border-white/[0.06] bg-hub-bg/30 p-4">
-                          <div>
-                            <p className="text-[10px] font-semibold uppercase tracking-wider text-hub-text-muted">
-                              SunSET ·{" "}
-                              {dossier.sunsetGradeDistribution?.term_label ??
-                                "Most recent"}
-                            </p>
-                            {sunsetSummary?.average_gpa != null && (
-                              <p className="mt-1 text-3xl font-bold text-hub-cyan">
-                                {sunsetSummary.average_gpa}
-                                <span className="ml-1 text-sm font-normal text-hub-text-muted">
-                                  avg GPA
-                                </span>
-                              </p>
-                            )}
-                            {sunsetSummary?.sample_size != null && (
-                              <p className="text-xs text-hub-text-muted">
-                                n = {sunsetSummary.sample_size} students
-                              </p>
-                            )}
-                          </div>
-                          {dossier.sunsetGradeDistribution
-                            ?.recommend_professor_percent != null && (
-                            <div className="ml-auto text-right">
-                              <p className="text-[10px] font-semibold uppercase tracking-wider text-hub-text-muted">
-                                Recommend Prof
-                              </p>
-                              <p className="text-2xl font-bold text-emerald-400">
-                                {Math.round(
-                                  dossier.sunsetGradeDistribution
-                                    .recommend_professor_percent,
-                                )}
-                                %
-                              </p>
-                            </div>
-                          )}
-                        </div>
-
-                        {/* Grade group breakdown */}
-                        {sunsetPrimaryGroups.length > 0 && (
-                          <div className="space-y-3">
-                            <p className="text-[10px] font-semibold uppercase tracking-wider text-hub-text-muted">
-                              By letter group
-                            </p>
-                            {sunsetPrimaryGroups.map((group) => (
-                              <div key={group.label}>
-                                <div className="mb-1 flex items-center justify-between text-xs">
-                                  <div className="flex items-center gap-2">
-                                    <span
-                                      className="h-2.5 w-2.5 rounded-full"
-                                      style={{ backgroundColor: group.color }}
-                                    />
-                                    <span className="font-semibold text-hub-text">
-                                      {group.label}
-                                    </span>
-                                    {group.breakdown.length > 0 && (
-                                      <span className="text-hub-text-muted">
-                                        {group.breakdown.join("  ")}
-                                      </span>
-                                    )}
-                                  </div>
-                                  <span
-                                    className="font-bold"
-                                    style={{ color: group.color }}
-                                  >
-                                    {formatPercent(group.percent)}
-                                  </span>
-                                </div>
-                                <div className="h-2 overflow-hidden rounded-full bg-hub-bg/80">
-                                  <div
-                                    className="h-full rounded-full transition-all"
-                                    style={{
-                                      width: `${group.percent}%`,
-                                      backgroundColor: group.color,
-                                      opacity: 0.8,
-                                    }}
-                                  />
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        )}
-
-                        {dossier.sunsetGradeDistribution?.source_url && (
-                          <a
-                            href={dossier.sunsetGradeDistribution.source_url}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="inline-flex items-center gap-1 text-xs text-hub-cyan hover:underline"
-                          >
-                            View on SunSET <ExternalLink className="h-3 w-3" />
-                          </a>
-                        )}
-                      </>
-                    ) : (
-                      <EmptyFeedback label="No grade distribution data available." />
-                    )}
-                  </div>
-                )}
-
-                {modalTab === "syllabus" && (
-                  <div className="space-y-3">
-                    {syllabusQuotes.length > 0 ? (
-                      syllabusQuotes.map((q) => <SourceCard key={q.id} quote={q} />)
-                    ) : dossier.rawQuotes.filter((q) => !q.source.toLowerCase().includes("reddit")).length > 0 ? (
-                      dossier.rawQuotes
-                        .filter((q) => !q.source.toLowerCase().includes("reddit"))
-                        .map((q) => <SourceCard key={q.id} quote={q} />)
-                    ) : dossier.logistics != null ? (
-                      // Research ran but no syllabus content was found
-                      <EmptyFeedback label="Online syllabus not found for this course." />
-                    ) : (
-                      // Research hasn't run yet
-                      <>
-                        <p className="mb-3 text-[11px] text-hub-text-muted italic">
-                          Fetching syllabus — check back shortly.
-                        </p>
-                        <SkeletonSourceCard />
-                        <SkeletonSourceCard />
-                      </>
-                    )}
-                  </div>
-                )}
-              </div>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
     </>
   );
 }

@@ -37,9 +37,16 @@ function donutSlicePath(startAngle: number, sweepAngle: number): string {
   ].join(" ");
 }
 
+function scoreColor(score: number): string {
+  if (score <= 5) return "#34d399";
+  if (score <= 7) return "#e3b12f";
+  return "#ff6b6b";
+}
+
 export function FitnessDial({ evaluation }: FitnessDialProps) {
   const categories = evaluation.categories ?? [];
   const hasCats = categories.length > 0;
+  const centerColor = scoreColor(evaluation.fitnessScore);
 
   return (
     <div className="flex flex-col items-center gap-5 w-full">
@@ -109,14 +116,14 @@ export function FitnessDial({ evaluation }: FitnessDialProps) {
           {/* Center: overall score */}
           <text
             x={CX}
-            y={CY - 9}
+            y={CY - 8}
             textAnchor="middle"
             dominantBaseline="middle"
             style={{
               fontFamily: "var(--font-outfit), sans-serif",
-              fontSize: "26px",
+              fontSize: "28px",
               fontWeight: 700,
-              fill: "white",
+              fill: centerColor,
             }}
           >
             {evaluation.fitnessScore.toFixed(1)}
@@ -130,12 +137,11 @@ export function FitnessDial({ evaluation }: FitnessDialProps) {
               fontFamily: "var(--font-outfit), sans-serif",
               fontSize: "9px",
               fontWeight: 500,
-              fill: "rgba(255,255,255,0.4)",
-              letterSpacing: "0.1em",
-              textTransform: "uppercase",
+              fill: "rgba(255,255,255,0.35)",
+              letterSpacing: "0.08em",
             }}
           >
-            Schedule difficulty — 1 = easy · 10 = very hard
+            out of 10
           </text>
         </svg>
       </div>
@@ -178,7 +184,14 @@ export function FitnessDial({ evaluation }: FitnessDialProps) {
       )}
 
       {/* Trend badge */}
-      <div className="inline-flex items-center gap-1.5 rounded-full border border-emerald-400/20 bg-emerald-400/10 px-3 py-1.5 text-[11px] font-semibold text-emerald-200">
+      <div
+        className="inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-[11px] font-semibold"
+        style={{
+          color: centerColor,
+          borderColor: `${centerColor}30`,
+          backgroundColor: `${centerColor}10`,
+        }}
+      >
         <TrendingUp className="h-3 w-3" aria-hidden />
         {evaluation.trendLabel}
       </div>

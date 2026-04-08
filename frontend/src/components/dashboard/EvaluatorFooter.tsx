@@ -17,16 +17,32 @@ function SeverityIcon({ severity }: { severity: ScheduleEvaluation["alerts"][0][
   }
 }
 
+function difficultyLabel(score: number): { text: string; color: string } {
+  if (score <= 3) return { text: "Light Load", color: "#34d399" };
+  if (score <= 5) return { text: "Moderate Load", color: "#34d399" };
+  if (score <= 7) return { text: "Heavy Load", color: "#e3b12f" };
+  return { text: "Very Heavy Load", color: "#ff6b6b" };
+}
+
 export function EvaluatorFooter({ evaluation }: EvaluatorFooterProps) {
+  const { text: labelText, color: labelColor } = difficultyLabel(evaluation.fitnessScore);
+
   return (
     <section className="mt-8 rounded-xl border border-white/[0.08] bg-hub-surface/95 p-4">
-      <div className="mb-4 border-b border-white/[0.06] pb-3">
-        <h2 className="font-[family-name:var(--font-outfit)] text-base font-semibold text-hub-text">
+      <div className="mb-4 flex items-center justify-between gap-3 border-b border-white/[0.06] pb-3">
+        <h2 className="font-[family-name:var(--font-outfit)] text-base font-bold text-white">
           Schedule Difficulty
         </h2>
-        <p className="mt-1 text-sm text-hub-text-secondary">
-          Combined commute, employment hours, and density — 1 = easy, 10 = very hard.
-        </p>
+        <span
+          className="rounded-full border px-2.5 py-0.5 text-[11px] font-semibold"
+          style={{
+            color: labelColor,
+            borderColor: `${labelColor}40`,
+            backgroundColor: `${labelColor}12`,
+          }}
+        >
+          {labelText}
+        </span>
       </div>
       <div className="flex flex-col gap-6 lg:flex-row lg:items-start">
         <div className="flex items-center justify-center border-b border-white/[0.06] pb-6 lg:w-[300px] lg:shrink-0 lg:border-b-0 lg:border-r lg:pb-0 lg:pr-6">

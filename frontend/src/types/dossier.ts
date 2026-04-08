@@ -86,6 +86,8 @@ export interface SunsetGradeDistribution {
   submission_time?: string | null;
   source_url?: string | null;
   set_summary?: SetSummary | null;
+  is_cross_course_fallback?: boolean;
+  source_course_code?: string | null;
 }
 
 export interface CourseLogistics {
@@ -97,6 +99,9 @@ export interface CourseLogistics {
   student_sentiment_summary: string | null;
   rate_my_professor: RateMyProfessorStats;
   evidence?: EvidenceItem[];
+  professor_info_found?: boolean;
+  general_course_overview?: string | null;
+  general_professor_overview?: string | null;
 }
 
 export interface ClassDossier {

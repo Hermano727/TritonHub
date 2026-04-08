@@ -1,24 +1,19 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { ChevronRight } from "lucide-react";
 import { RightSidebar } from "@/components/layout/RightSidebar";
 import { IngestionHub } from "@/components/ingestion/IngestionHub";
 import { ProcessingModal } from "@/components/modals/ProcessingModal";
 import { DossierScheduleWorkspace, type DossierScheduleWorkspaceHandle } from "@/components/dashboard/DossierScheduleWorkspace";
+import { SaveMenu } from "@/components/command-center/SaveMenu";
+import { usePlanSync } from "@/hooks/usePlanSync";
 import { mockDossier } from "@/lib/mock/dossier";
-import { createClient } from "@/lib/supabase/client";
-import {
-  buildPayloadFromClasses,
-  parsePlanPayload,
-  type SavedPlanPayloadV1,
-} from "@/lib/hub/plan-payload";
-import { vaultRowToVaultItem } from "@/lib/hub/vault-map";
+import { buildPayloadFromClasses } from "@/lib/hub/plan-payload";
 import { analyzeFit, researchScreenshot } from "@/lib/api/parse";
 import { courseResearchResultToDossier } from "@/lib/mappers/courseEntryToDossier";
 import { dossiersToScheduleItems } from "@/lib/mappers/dossiersToScheduleItems";
-import type { SavedPlanRow, VaultItemRow } from "@/types/saved-plan";
 import type { ClassDossier, ScheduleEvaluation, UiPhase } from "@/types/dossier";
 
 const LINE_MS = 360;
@@ -27,23 +22,13 @@ const FINISH_PAD_MS = 650;
 export function CommandCenter() {
   const [phase, setPhase] = useState<UiPhase>("idle");
   const [ingestionCollapsed, setIngestionCollapsed] = useState(false);
-  const [activePlanId, setActivePlanId] = useState(mockDossier.activeQuarterId);
   const [classes, setClasses] = useState<ClassDossier[]>(mockDossier.classes);
   const [evaluation, setEvaluation] = useState<ScheduleEvaluation>(mockDossier.evaluation);
-  const [authed, setAuthed] = useState(false);
-  const [remotePlans, setRemotePlans] = useState<SavedPlanRow[]>([]);
-  const [remoteVault, setRemoteVault] = useState<VaultItemRow[]>([]);
   const [saveMenuOpen, setSaveMenuOpen] = useState(false);
+
   const workspaceRef = useRef<DossierScheduleWorkspaceHandle | null>(null);
   const timeoutsRef = useRef<number[]>([]);
   const processingLockRef = useRef(false);
-  const activePlanIdRef = useRef(activePlanId);
-  const remotePlansRef = useRef(remotePlans);
-  const authedRef = useRef(authed);
-
-  activePlanIdRef.current = activePlanId;
-  remotePlansRef.current = remotePlans;
-  authedRef.current = authed;
 
   const clearRun = useCallback(() => {
     timeoutsRef.current.forEach((id) => window.clearTimeout(id));
@@ -52,280 +37,37 @@ export function CommandCenter() {
 
   useEffect(() => () => clearRun(), [clearRun]);
 
-  const loadHubData = useCallback(async () => {
-    try {
-      const supabase = createClient();
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-      if (!user) {
-        setAuthed(false);
-        setRemotePlans([]);
-        setRemoteVault([]);
-        setActivePlanId(mockDossier.activeQuarterId);
-        return;
-      }
-      setAuthed(true);
-      const [plansRes, vaultRes] = await Promise.all([
-        supabase.from("saved_plans").select("*").order("updated_at", {
-          ascending: false,
-        }),
-        supabase.from("vault_items").select("*").order("updated_at", {
-          ascending: false,
-        }),
-      ]);
-      const plans = (plansRes.data as SavedPlanRow[] | null) ?? [];
-      const vault = (vaultRes.data as VaultItemRow[] | null) ?? [];
-      setRemotePlans(plans);
-      setRemoteVault(vault);
-      if (plans.length > 0) {
-        setActivePlanId((prev) =>
-          plans.some((p) => p.id === prev) ? prev : plans[0].id,
-        );
-      } else {
-        setActivePlanId("");
-      }
-    } catch {
-      setAuthed(false);
-      setRemotePlans([]);
-      setRemoteVault([]);
-      setActivePlanId(mockDossier.activeQuarterId);
-    }
-  }, []);
+  const resetDemo = useCallback(() => {
+    clearRun();
+    processingLockRef.current = false;
+    setPhase("idle");
+    setIngestionCollapsed(false);
+    setClasses(mockDossier.classes);
+    setEvaluation(mockDossier.evaluation);
+  }, [clearRun]);
 
-  useEffect(() => {
-    void loadHubData();
-  }, [loadHubData]);
-
-  const quarterLabel = useMemo(() => {
-    if (!authed) {
-      return (
-        mockDossier.quarters.find((q) => q.id === activePlanId)?.label ??
-        "Spring 2026"
-      );
-    }
-    const plan = remotePlans.find((p) => p.id === activePlanId);
-    if (plan?.quarter_label) return plan.quarter_label;
-    if (plan) {
-      const { activeQuarterId: aid } = parsePlanPayload(plan.payload);
-      if (aid) {
-        const q = mockDossier.quarters.find((x) => x.id === aid);
-        if (q) return q.label;
-      }
-    }
-    return "Schedule";
-  }, [authed, activePlanId, remotePlans]);
-
-  const sidebarPlans = useMemo(() => {
-    if (!authed) {
-      return mockDossier.quarters.map((q) => ({
-        id: q.id,
-        label: q.label,
-      }));
-    }
-    return remotePlans.map((p) => ({
-      id: p.id,
-      label: p.title?.trim() || "Untitled plan",
-      subtitle:
-        p.quarter_label ||
-        (p.status === "draft" ? "Draft" : undefined) ||
-        undefined,
-    }));
-  }, [authed, remotePlans]);
-
-  const sidebarVault = useMemo(() => {
-    if (!authed) return mockDossier.vaultItems;
-    return remoteVault
-      .filter(
-        (v) =>
-          !activePlanId ||
-          v.plan_id === null ||
-          v.plan_id === activePlanId,
-      )
-      .map(vaultRowToVaultItem);
-  }, [authed, remoteVault, activePlanId]);
-
-  const { viewClasses, viewEvaluation, viewCommitments } = useMemo(() => {
-    if (phase !== "dashboard") {
-      return {
-        viewClasses: classes,
-        viewEvaluation: evaluation,
-        viewCommitments: [],
-      };
-    }
-    if (!authed) {
-      return {
-        viewClasses: classes,
-        viewEvaluation: evaluation,
-        viewCommitments: [],
-      };
-    }
-    const plan = remotePlans.find((p) => p.id === activePlanId);
-    if (plan) {
-      const parsed = parsePlanPayload(plan.payload);
-      if (parsed.classes.length > 0) {
-        return {
-          viewClasses: parsed.classes,
-          viewEvaluation: parsed.evaluation,
-          viewCommitments: parsed.commitments ?? [],
-        };
-      }
-    }
-    return {
-      viewClasses: classes,
-      viewEvaluation: evaluation,
-      viewCommitments: [],
-    };
-  }, [phase, authed, activePlanId, remotePlans, classes, evaluation]);
-
-  const classCount =
-    phase === "dashboard" ? viewClasses.length : classes.length;
-
-  const persistCompletedSession = useCallback(async (payload: SavedPlanPayloadV1) => {
-    try {
-      const supabase = createClient();
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-      if (!user) return;
-
-      let ql = "Spring 2026";
-      const pid = activePlanIdRef.current;
-      if (authedRef.current) {
-        const p = remotePlansRef.current.find((x) => x.id === pid);
-        if (p?.quarter_label) ql = p.quarter_label;
-      } else {
-        ql =
-          mockDossier.quarters.find((q) => q.id === pid)?.label ?? ql;
-      }
-
-      const titleSuffix = new Date().toLocaleDateString(undefined, {
-        month: "short",
-        day: "numeric",
-      });
-      const { data: inserted } = await supabase
-        .from("saved_plans")
-        .insert({
-          user_id: user.id,
-          title: `${ql} · ${titleSuffix}`,
-          quarter_label: ql,
-          status: "complete",
-          payload_version: 1,
-          payload,
-        })
-        .select("id")
-        .single();
-
-      const [plansRes, vaultRes] = await Promise.all([
-        supabase.from("saved_plans").select("*").order("updated_at", {
-          ascending: false,
-        }),
-        supabase.from("vault_items").select("*").order("updated_at", {
-          ascending: false,
-        }),
-      ]);
-      setAuthed(true);
-      setRemotePlans((plansRes.data as SavedPlanRow[] | null) ?? []);
-      setRemoteVault((vaultRes.data as VaultItemRow[] | null) ?? []);
-      if (inserted?.id) setActivePlanId(inserted.id as string);
-    } catch {
-      /* ignore persistence errors */
-    }
-  }, []);
-
-  const handleSaveOverwrite = useCallback(async () => {
-    try {
-      const supabase = createClient();
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-      if (!user) return;
-
-      const pid = activePlanIdRef.current;
-      const activeQ =
-        !authedRef.current &&
-        mockDossier.quarters.some((q) => q.id === pid)
-          ? pid
-          : mockDossier.activeQuarterId;
-
-      const editorClasses = workspaceRef.current?.getCurrentClasses() ?? viewClasses;
-      const editorCommitments = workspaceRef.current?.getCurrentCommitments() ?? [];
-      const payload = buildPayloadFromClasses(activeQ, editorClasses, editorCommitments, viewEvaluation);
-
-      if (!pid) {
-        const titleSuffix = new Date().toLocaleDateString(undefined, {
-          month: "short",
-          day: "numeric",
-        });
-        const title = `${mockDossier.quarters.find((q) => q.id === activeQ)?.label ?? "Schedule"} · ${titleSuffix}`;
-        const { data } = await supabase
-          .from("saved_plans")
-          .insert({
-            user_id: user.id,
-            title,
-            quarter_label: mockDossier.quarters.find((q) => q.id === activeQ)?.label ?? "",
-            status: "draft",
-            payload_version: 1,
-            payload,
-          })
-          .select("id")
-          .single();
-        if (data?.id) setActivePlanId(data.id as string);
-      } else {
-        await supabase.from("saved_plans").update({
-          payload,
-          payload_version: 1,
-        }).eq("id", pid);
-      }
-      await loadHubData();
-    } catch {
-      /* ignore save errors */
-    }
-  }, [viewClasses, viewEvaluation, loadHubData]);
-
-  const handleSaveAsNew = useCallback(async () => {
-    try {
-      const supabase = createClient();
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-      if (!user) return;
-
-      const pid = activePlanIdRef.current;
-      const activeQ =
-        !authedRef.current &&
-        mockDossier.quarters.some((q) => q.id === pid)
-          ? pid
-          : mockDossier.activeQuarterId;
-
-      const editorClasses = workspaceRef.current?.getCurrentClasses() ?? viewClasses;
-      const editorCommitments = workspaceRef.current?.getCurrentCommitments() ?? [];
-      const payload = buildPayloadFromClasses(activeQ, editorClasses, editorCommitments, viewEvaluation);
-
-      const titleSuffix = new Date().toLocaleDateString(undefined, {
-        month: "short",
-        day: "numeric",
-      });
-      const title = `${mockDossier.quarters.find((q) => q.id === activeQ)?.label ?? "Schedule"} · ${titleSuffix}`;
-
-      const { data } = await supabase
-        .from("saved_plans")
-        .insert({
-          user_id: user.id,
-          title,
-          quarter_label: mockDossier.quarters.find((q) => q.id === activeQ)?.label ?? "",
-          status: "draft",
-          payload_version: 1,
-          payload,
-        })
-        .select("id")
-        .single();
-      if (data?.id) setActivePlanId(data.id as string);
-      await loadHubData();
-    } catch {
-      /* ignore save errors */
-    }
-  }, [viewClasses, viewEvaluation, loadHubData]);
+  const {
+    authed,
+    activePlanId,
+    setActivePlanId,
+    quarterLabel,
+    sidebarPlans,
+    sidebarVault,
+    viewClasses,
+    viewEvaluation,
+    viewCommitments,
+    persistCompletedSession,
+    handleSaveOverwrite,
+    handleSaveAsNew,
+    handleNewPlan,
+    handleDeletePlan,
+  } = usePlanSync({
+    phase,
+    classes,
+    evaluation,
+    workspaceRef,
+    onPlanCreated: resetDemo,
+  });
 
   const runIngestionFlow = useCallback(
     async (imageFile: File | undefined) => {
@@ -334,11 +76,10 @@ export function CommandCenter() {
       clearRun();
       setPhase("processing");
 
-      const minWait = FINISH_PAD_MS;
       const started = Date.now();
-
       let nextClasses: ClassDossier[] = mockDossier.classes;
       let nextEvaluation: ScheduleEvaluation = mockDossier.evaluation;
+
       if (imageFile?.type.startsWith("image/")) {
         try {
           console.debug("runIngestionFlow: calling researchScreenshot with file:", imageFile?.name, imageFile?.type);
@@ -349,7 +90,7 @@ export function CommandCenter() {
 
           const minWaitPromise = new Promise<void>((resolve) => {
             const elapsed = Date.now() - started;
-            const remaining = Math.max(0, minWait - elapsed);
+            const remaining = Math.max(0, FINISH_PAD_MS - elapsed);
             const id = window.setTimeout(() => resolve(), remaining);
             timeoutsRef.current.push(id);
           });
@@ -370,16 +111,13 @@ export function CommandCenter() {
             };
           }
         } catch (err) {
-          // Keep mock dossier on error, but surface the error to the dev console for debugging
-          // (we avoid changing UX flow here; this is purely diagnostic)
-          // eslint-disable-next-line no-console
           console.error("runIngestionFlow: researchScreenshot failed:", err);
         }
       }
 
       if (nextClasses === mockDossier.classes || !imageFile?.type.startsWith("image/")) {
         const elapsed = Date.now() - started;
-        const remaining = Math.max(0, minWait - elapsed);
+        const remaining = Math.max(0, FINISH_PAD_MS - elapsed);
         await new Promise<void>((resolve) => {
           const id = window.setTimeout(() => resolve(), remaining);
           timeoutsRef.current.push(id);
@@ -393,14 +131,8 @@ export function CommandCenter() {
       setPhase("dashboard");
       setIngestionCollapsed(true);
 
-      const pid = activePlanIdRef.current;
-      const activeQ =
-        !authedRef.current &&
-        mockDossier.quarters.some((q) => q.id === pid)
-          ? pid
-          : mockDossier.activeQuarterId;
       const payload = buildPayloadFromClasses(
-        activeQ,
+        mockDossier.activeQuarterId,
         nextClasses,
         [],
         nextEvaluation,
@@ -412,12 +144,8 @@ export function CommandCenter() {
 
   const handleFilesSelected = useCallback(
     (files: FileList | File[]) => {
-      // Log received files for debugging why mock data might be used
-      // eslint-disable-next-line no-console
       console.debug("handleFilesSelected: files:", files);
-
       const imageFile = Array.from(files).find((f) => f.type.startsWith("image/"));
-      // eslint-disable-next-line no-console
       console.debug("handleFilesSelected: selected imageFile:", imageFile?.name, imageFile?.type);
       void runIngestionFlow(imageFile);
     },
@@ -425,74 +153,20 @@ export function CommandCenter() {
   );
 
   const handleManualSubmit = useCallback(
-    (_payload: {
-      professor: string;
-      course: string;
-      quarter: string;
-    }) => {
+    (_payload: { professor: string; course: string; quarter: string }) => {
       void runIngestionFlow(undefined);
     },
     [runIngestionFlow],
   );
 
-  const resetDemo = useCallback(() => {
-    clearRun();
-    processingLockRef.current = false;
-    setPhase("idle");
-    setIngestionCollapsed(false);
-    setClasses(mockDossier.classes);
-    setEvaluation(mockDossier.evaluation);
-  }, [clearRun]);
-
-  const handleNewPlan = useCallback(async () => {
-    if (!authed) return;
-    try {
-      const supabase = createClient();
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-      if (!user) return;
-      const { data, error } = await supabase
-        .from("saved_plans")
-        .insert({
-          user_id: user.id,
-          title: "Untitled plan",
-          quarter_label: "",
-          status: "draft",
-          payload_version: 1,
-          payload: {},
-        })
-        .select("id")
-        .single();
-      if (error) return;
-      await loadHubData();
-      if (data?.id) setActivePlanId(data.id as string);
-      resetDemo();
-    } catch {
-      /* ignore */
-    }
-  }, [authed, loadHubData, resetDemo]);
-
-  const handleDeletePlan = useCallback(async (id: string) => {
-    if (!authed) return;
-    try {
-      const supabase = createClient();
-      await supabase.from("saved_plans").delete().eq("id", id);
-      await loadHubData();
-      if (activePlanIdRef.current === id) setActivePlanId("");
-    } catch {
-      /* ignore delete errors */
-    }
-  }, [authed, loadHubData]);
+  const classCount = phase === "dashboard" ? viewClasses.length : classes.length;
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="flex min-h-0 flex-1">
         <main
           className={`relative min-w-0 flex-1 overflow-y-auto py-4 pb-10 ${
-            phase === "dashboard"
-              ? "px-4 lg:pl-3 lg:pr-8"
-              : "px-4 lg:px-6"
+            phase === "dashboard" ? "px-4 lg:pl-3 lg:pr-8" : "px-4 lg:px-6"
           }`}
         >
           <div
@@ -504,9 +178,7 @@ export function CommandCenter() {
             >
               <span>Schedules</span>
               <ChevronRight className="h-3 w-3" aria-hidden />
-              <span className="font-medium text-hub-text-secondary">
-                {quarterLabel}
-              </span>
+              <span className="font-medium text-hub-text-secondary">{quarterLabel}</span>
               {phase === "dashboard" ? (
                 <>
                   <ChevronRight className="h-3 w-3" aria-hidden />
@@ -549,44 +221,15 @@ export function CommandCenter() {
                       initialCommitments={viewCommitments}
                       ref={workspaceRef}
                       calendarHeaderActions={(
-                        <>
-                          <div className="flex items-center gap-2">
-                            <div className="relative">
-                              <button
-                                type="button"
-                                onClick={() => setSaveMenuOpen((s) => !s)}
-                                className="inline-flex items-center gap-1.5 rounded-lg border border-hub-cyan/35 bg-hub-cyan/10 px-2.5 py-1.5 text-[11px] font-semibold text-hub-cyan transition hover:bg-hub-cyan/18"
-                              >
-                                Save
-                              </button>
-                              {saveMenuOpen && (
-                                <div className="absolute right-0 z-40 mt-2 w-44 rounded-lg border border-white/[0.06] bg-hub-surface p-2 shadow-lg">
-                                  <button
-                                    type="button"
-                                    onClick={() => { void handleSaveOverwrite(); setSaveMenuOpen(false); }}
-                                    className="w-full text-left py-1 px-2 text-sm hover:bg-white/5"
-                                  >
-                                    Overwrite
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => { void handleSaveAsNew(); setSaveMenuOpen(false); }}
-                                    className="w-full text-left py-1 px-2 text-sm hover:bg-white/5"
-                                  >
-                                    Save as new
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => setSaveMenuOpen(false)}
-                                    className="w-full text-left py-1 px-2 text-sm text-hub-text-muted hover:bg-white/5"
-                                  >
-                                    Cancel
-                                  </button>
-                                </div>
-                              )}
-                            </div>
-                          </div>
-                        </>
+                        <div className="flex items-center gap-2">
+                          <SaveMenu
+                            open={saveMenuOpen}
+                            onToggle={() => setSaveMenuOpen((s) => !s)}
+                            onOverwrite={() => void handleSaveOverwrite()}
+                            onSaveAsNew={() => void handleSaveAsNew()}
+                            onClose={() => setSaveMenuOpen(false)}
+                          />
+                        </div>
                       )}
                     />
                   )}
@@ -595,14 +238,13 @@ export function CommandCenter() {
             </AnimatePresence>
           </div>
         </main>
+
         <RightSidebar
           planSectionTitle={authed ? "Saved plans" : "My Quarters"}
           plans={sidebarPlans}
           activePlanId={activePlanId}
           onSelectPlan={(id) => { setActivePlanId(id); setPhase("dashboard"); }}
-          newPlanLabel={
-            authed ? "New saved plan" : "New quarter research"
-          }
+          newPlanLabel={authed ? "New saved plan" : "New quarter research"}
           onNewPlan={authed ? handleNewPlan : undefined}
           onDeletePlan={authed ? handleDeletePlan : undefined}
           vaultItems={sidebarVault}

@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import "leaflet/dist/leaflet.css";
 
 :root {
   --hub-bg: #0a192f;
@@ -270,4 +271,34 @@ body {
 .rp-dark-popup .leaflet-popup-content {
   margin: 0 !important;
   color: #e2e8f0 !important;
+}
+
+/* Ensure important headings inside card/panel containers remain high-contrast (white).
+   Targets common card classes used across the app so titles and headers are readable
+   while leaving small muted labels unchanged. */
+.rounded-xl h1,
+.rounded-xl h2,
+.rounded-xl h3,
+.rounded-xl h4,
+.rounded-lg h1,
+.rounded-lg h2,
+.rounded-lg h3,
+.rounded-lg h4,
+.glass-panel h1,
+.glass-panel h2,
+.glass-panel h3,
+.glass-panel h4 {
+  color: var(--hub-text) !important;
+}
+
+/* Also ensure small uppercase section labels inside panels are high-contrast.
+   Many components use Tailwind utility classes like `font-semibold uppercase tracking-wider`
+   for section titles — promote these to white inside common panel wrappers. */
+.rounded-xl .font-semibold.uppercase.tracking-wider,
+.rounded-xl .font-semibold.uppercase.tracking-widest,
+.rounded-lg .font-semibold.uppercase.tracking-wider,
+.rounded-lg .font-semibold.uppercase.tracking-widest,
+.glass-panel .font-semibold.uppercase.tracking-wider,
+.glass-panel .font-semibold.uppercase.tracking-widest {
+  color: var(--hub-text) !important;
 }

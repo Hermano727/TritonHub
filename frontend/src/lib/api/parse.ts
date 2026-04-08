@@ -39,6 +39,8 @@ export interface SunsetGradeDistribution {
   submission_time?: string | null;
   source_url?: string | null;
   set_summary?: SetSummary | null;
+  is_cross_course_fallback?: boolean;
+  source_course_code?: string | null;
 }
 
 export async function parseScreenshot(

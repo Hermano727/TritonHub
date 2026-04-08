@@ -1,552 +1,52 @@
+"""
+Course research orchestration: geocoding, cache lookup, Browser Use runs,
+and batch coordination. All Pydantic models live in app.models.research;
+Browser Use logic lives in app.services.browser_use; SunSET computation
+lives in app.services.sunset.
+"""
+
+from __future__ import annotations
+
 import asyncio
-import json
-import os
-import re
+import logging
 from typing import Any, Callable
 
 from dotenv import load_dotenv
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import ValidationError
 
 from app.db.client import get_supabase_client
-from app.db.service import (
-    get_course_research_cache,
-    get_sunset_grade_distribution,
-    upsert_course_research_cache,
-)
+from app.db.service import get_course_research_cache, upsert_course_research_cache
+from app.db.sunset_db import get_sunset_grade_distribution
 from app.models.course_parse import CourseEntry, SectionMeeting
-from app.models.domain import SunsetGradeDistributionRow
+from app.models.research import (
+    BatchCostSummary,
+    BatchResearchResponse,
+    CourseResearchResult,
+    CourseResearchRunError,
+    CourseLogistics,
+)
+from app.services.browser_use import (
+    create_browser_use_client,
+    resolve_browser_use_api_key,
+    run_course_logistics,
+)
 from app.services.geocode import geocode_location
-
+from app.services.sunset import build_sunset_grade_distribution
 
 load_dotenv()
 
-
-class RateMyProfessorStats(BaseModel):
-    rating: float | None = Field(
-        default=None,
-        description="Overall professor rating from Rate My Professors, on a 5-point scale",
-    )
-    would_take_again_percent: float | None = Field(
-        default=None,
-        description="Percentage from Rate My Professors, for example 78 for 78%",
-    )
-    difficulty: float | None = Field(
-        default=None,
-        description="Difficulty score from Rate My Professors",
-    )
-    url: str | None = Field(default=None, description="Direct Rate My Professors page URL")
-
-
-class EvidenceItem(BaseModel):
-    source: str = Field(
-        ...,
-        description="Source type: 'Reddit Insight', 'Syllabus Snippet', 'Course Page', etc.",
-    )
-    content: str = Field(
-        ...,
-        description="Verbatim quote extracted from the source — do NOT paraphrase",
-    )
-    url: str = Field(
-        ...,
-        description="Direct permalink URL to the specific post, comment, or page section",
-    )
-    relevance_score: float = Field(
-        ...,
-        description="0.0 to 1.0 — how directly relevant this quote is to the course",
-    )
-
-
-class CourseLogistics(BaseModel):
-    attendance_required: bool | None = Field(
-        default=None,
-        description="True if attendance is explicitly required or graded, false if optional",
-    )
-    grade_breakdown: str | None = Field(
-        default=None,
-        description='Compact grading breakdown such as "Homework 20%, Midterm 30%, Final 50%"',
-    )
-    course_webpage_url: str | None = Field(
-        default=None,
-        description="Direct link to the main course page, syllabus, or official class website",
-    )
-    textbook_required: bool | None = Field(
-        default=None,
-        description="True if a textbook or paid course platform is required, false otherwise",
-    )
-    podcasts_available: bool | None = Field(
-        default=None,
-        description="True if lectures are podcasted or officially recorded, false otherwise",
-    )
-    student_sentiment_summary: str | None = Field(
-        default=None,
-        description=(
-            "One short summary of what students commonly say about the class or professor, "
-            "based on Reddit and Rate My Professors"
-        ),
-    )
-    rate_my_professor: RateMyProfessorStats = Field(default_factory=RateMyProfessorStats)
-    evidence: list[EvidenceItem] = Field(
-        default_factory=list,
-        description=(
-            "Verbatim quotes from Reddit threads, syllabus pages, or other sources. "
-            "Each item must be a direct quote — never paraphrase."
-        ),
-    )
-
-
-class CourseRunCost(BaseModel):
-    session_id: str | None = None
-    status: str | None = None
-    llm_cost_usd: float | None = None
-    browser_cost_usd: float | None = None
-    proxy_cost_usd: float | None = None
-    total_cost_usd: float | None = None
-
-
-class SetSummary(BaseModel):
-    average_gpa: float | None = None
-    median_gpa: float | None = None
-    pass_rate_percent: float | None = None
-    sample_size: int | None = None
-    grade_counts: dict[str, int] = Field(default_factory=dict)
-
-
-class SunsetGradeDistribution(BaseModel):
-    term_label: str | None = None
-    professor_name: str | None = None
-    grade_distribution: dict[str, Any] = Field(default_factory=dict)
-    recommend_professor_percent: float | None = None
-    submission_time: str | None = None
-    source_url: str | None = None
-    set_summary: SetSummary | None = None
-
-
-class CourseResearchResult(BaseModel):
-    course_code: str
-    course_title: str | None = None
-    professor_name: str | None = None
-    meetings: list[SectionMeeting] = Field(default_factory=list)
-    logistics: CourseLogistics | None = None
-    sunset_grade_distribution: SunsetGradeDistribution | None = None
-    cache_hit: bool = False
-    cached_at: str | None = None
-    cache_error: str | None = None
-    cost: CourseRunCost | None = None
-    error: str | None = None
-
-
-class BatchCostSummary(BaseModel):
-    llm_cost_usd: float = 0.0
-    browser_cost_usd: float = 0.0
-    proxy_cost_usd: float = 0.0
-    total_cost_usd: float = 0.0
-    run_count: int = 0
-
-
-class BatchResearchResponse(BaseModel):
-    input_source: str
-    course_count: int
-    results: list[CourseResearchResult]
-    cost_summary: BatchCostSummary
-
-
-class CourseRunOutcome(BaseModel):
-    logistics: CourseLogistics
-    cost: CourseRunCost
-
-
-class CourseResearchRunError(RuntimeError):
-    def __init__(self, message: str, *, cost: CourseRunCost | None = None) -> None:
-        super().__init__(message)
-        self.cost = cost
-
-
-def resolve_browser_use_api_key() -> str:
-    for env_name in ("BROWSER_USE_API_KEY", "BROWSERUSE_API_KEY", "BROWSER_USE_KEY"):
-        api_key = os.getenv(env_name)
-        if api_key:
-            if not api_key.startswith("bu_"):
-                raise RuntimeError(
-                    f"{env_name} was found, but Browser Use Cloud keys should start with 'bu_'."
-                )
-            os.environ["BROWSER_USE_API_KEY"] = api_key
-            return api_key
-
-    raise RuntimeError(
-        "Missing Browser Use API key. Set BROWSER_USE_API_KEY in your environment or .env file."
-    )
-
-
-def create_browser_use_client(api_key: str) -> Any:
-    try:
-        from browser_use_sdk.v3 import AsyncBrowserUse
-    except ModuleNotFoundError as exc:
-        raise RuntimeError(
-            "Browser Use Cloud SDK v3 is not available in this environment. "
-            "Run `pip install --upgrade browser-use-sdk` and try again."
-        ) from exc
-
-    return AsyncBrowserUse(api_key=api_key)
-
-
-def normalize_param(value: str | None, *, fallback: str) -> str:
-    cleaned = " ".join((value or "").split())
-    return cleaned or fallback
-
-
-def parse_cost(value: Any) -> float | None:
-    if value in (None, ""):
-        return None
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return None
-
-
-def build_cost_metadata(result: Any) -> CourseRunCost:
-    return CourseRunCost(
-        session_id=str(getattr(result, "id", "")) or None,
-        status=str(getattr(result, "status", "")) or None,
-        llm_cost_usd=parse_cost(getattr(result, "llm_cost_usd", None)),
-        browser_cost_usd=parse_cost(getattr(result, "browser_cost_usd", None)),
-        proxy_cost_usd=parse_cost(getattr(result, "proxy_cost_usd", None)),
-        total_cost_usd=parse_cost(getattr(result, "total_cost_usd", None)),
-    )
-
-
-def summarize_costs(results: list[CourseResearchResult]) -> BatchCostSummary:
-    summary = BatchCostSummary(run_count=len(results))
-    for result in results:
-        if not result.cost:
-            continue
-        summary.llm_cost_usd += result.cost.llm_cost_usd or 0.0
-        summary.browser_cost_usd += result.cost.browser_cost_usd or 0.0
-        summary.proxy_cost_usd += result.cost.proxy_cost_usd or 0.0
-        summary.total_cost_usd += result.cost.total_cost_usd or 0.0
-    return summary
-
-
-def summarize_output(output: Any) -> str:
-    if output is None:
-        return "None"
-    if isinstance(output, str):
-        return repr(output[:200])
-    return repr(output)[:200]
-
-
-def extract_first_json_object(text: str) -> str | None:
-    start = text.find("{")
-    if start == -1:
-        return None
-
-    depth = 0
-    in_string = False
-    escaped = False
-
-    for index in range(start, len(text)):
-        char = text[index]
-        if in_string:
-            if escaped:
-                escaped = False
-            elif char == "\\":
-                escaped = True
-            elif char == '"':
-                in_string = False
-            continue
-
-        if char == '"':
-            in_string = True
-        elif char == "{":
-            depth += 1
-        elif char == "}":
-            depth -= 1
-            if depth == 0:
-                return text[start : index + 1]
-
-    return None
-
-
-def iter_json_candidates(text: str) -> list[str]:
-    stripped = text.strip()
-    candidates: list[str] = [stripped]
-
-    for match in re.finditer(r"```(?:json)?\s*(.*?)```", stripped, re.DOTALL | re.IGNORECASE):
-        block = match.group(1).strip()
-        if block:
-            candidates.append(block)
-
-    extracted = extract_first_json_object(stripped)
-    if extracted:
-        candidates.append(extracted)
-
-    # Keep order but avoid retrying the same exact candidate.
-    unique_candidates: list[str] = []
-    seen: set[str] = set()
-    for candidate in candidates:
-        if candidate not in seen:
-            seen.add(candidate)
-            unique_candidates.append(candidate)
-    return unique_candidates
-
-
-def parse_course_logistics_output(raw_output: Any) -> CourseLogistics:
-    if isinstance(raw_output, CourseLogistics):
-        return raw_output
-    if isinstance(raw_output, str):
-        last_error: ValidationError | None = None
-        for candidate in iter_json_candidates(raw_output):
-            try:
-                return CourseLogistics.model_validate_json(candidate)
-            except ValidationError as exc:
-                last_error = exc
-
-            try:
-                return CourseLogistics.model_validate(json.loads(candidate))
-            except (ValidationError, json.JSONDecodeError):
-                continue
-
-        if last_error is not None:
-            raise last_error
-        return CourseLogistics.model_validate_json(raw_output)
-    return CourseLogistics.model_validate(raw_output)
-
-
-def build_sunset_grade_distribution(
-    row: SunsetGradeDistributionRow | None,
-) -> SunsetGradeDistribution | None:
-    # Helper: map common letter grades to GPA
-    _GRADE_TO_GPA = {
-        "A+": 4.0, "A": 4.0, "A-": 3.7,
-        "B+": 3.3, "B": 3.0, "B-": 2.7,
-        "C+": 2.3, "C": 2.0, "C-": 1.7,
-        "D+": 1.3, "D": 1.0, "D-": 0.7,
-        "F": 0.0,
-    }
-
-    def _parse_count(value: Any) -> int:
-        if value is None:
-            return 0
-        if isinstance(value, (int, float)):
-            try:
-                return int(value)
-            except Exception:
-                return 0
-        s = str(value).strip().replace(",", "")
-        s = re.sub(r"[^0-9.\-]", "", s)
-        try:
-            return int(float(s))
-        except Exception:
-            return 0
-
-    def _parse_float(value: Any) -> float | None:
-        if value is None:
-            return None
-        if isinstance(value, (int, float)):
-            return float(value)
-        s = str(value).strip().replace(",", "")
-        s = re.sub(r"[^0-9.\-]", "", s)
-        if not s:
-            return None
-        try:
-            return float(s)
-        except Exception:
-            return None
-
-    def compute_set_summary(payload: dict[str, Any]) -> SetSummary:
-        nested_distribution = payload.get("distribution")
-        grade_dist = nested_distribution if isinstance(nested_distribution, dict) else payload
-        counts: dict[str, int] = {}
-        total = 0
-        weighted = 0.0
-
-        for k, v in (grade_dist or {}).items():
-            label = str(k).strip()
-            cnt = _parse_count(v)
-            if cnt <= 0:
-                continue
-            counts[label] = counts.get(label, 0) + cnt
-            total += cnt
-            if label in _GRADE_TO_GPA:
-                weighted += cnt * _GRADE_TO_GPA[label]
-
-        explicit_avg = _parse_float(payload.get("average_gpa"))
-        explicit_total = _parse_count(payload.get("total_students")) or None
-
-        avg = explicit_avg if explicit_avg is not None else ((weighted / total) if total > 0 else None)
-
-        median = None
-        if total > 0:
-            bucketed: list[tuple[float, int]] = []
-            for lbl, cnt in counts.items():
-                gpa = _GRADE_TO_GPA.get(lbl)
-                if gpa is not None:
-                    bucketed.append((gpa, cnt))
-            if bucketed:
-                bucketed.sort(key=lambda x: -x[0])
-                cum = 0
-                half = total / 2.0
-                for gpa, cnt in bucketed:
-                    cum += cnt
-                    if cum >= half:
-                        median = gpa
-                        break
-
-        passing = 0
-        for lbl, cnt in counts.items():
-            gpa = _GRADE_TO_GPA.get(lbl)
-            if gpa is not None and gpa > 0:
-                passing += cnt
-        pass_rate = (passing / total * 100.0) if total > 0 else None
-
-        sample_size = explicit_total if explicit_total is not None else (total if total > 0 else None)
-
-        return SetSummary(
-            average_gpa=round(avg, 2) if avg is not None else None,
-            median_gpa=round(median, 2) if median is not None else None,
-            pass_rate_percent=round(pass_rate, 1) if pass_rate is not None else None,
-            sample_size=sample_size,
-            grade_counts=counts,
-        )
-
-    if row is None:
-        return None
-    dist = row.grade_distribution or {}
-    summary = compute_set_summary(dist)
-    return SunsetGradeDistribution(
-        term_label=row.term_label,
-        professor_name=row.professor_name or None,
-        grade_distribution=row.grade_distribution,
-        recommend_professor_percent=row.recommend_professor_percent,
-        submission_time=row.submission_time,
-        source_url=row.source_url,
-        set_summary=summary,
-    )
-
-
-def build_task(course: str, instructor: str | None) -> str:
-    subject = normalize_param(course, fallback="unknown course")
-    normalized_instructor = normalize_param(instructor, fallback="unknown")
-    if normalized_instructor == "unknown":
-        instructor_rule = (
-            "- The instructor is unknown, so leave Rate My Professors fields null unless an exact "
-            "UCSD match is obvious.\n"
-        )
-    else:
-        instructor_rule = (
-            f"- The instructor is {normalized_instructor}. Use that exact UCSD instructor for Rate "
-            "My Professors.\n"
-        )
-
-    return (
-        f"Find a fast, minimal data snapshot for {subject}.\n\n"
-        "Priority sources:\n"
-        "1. Official UCSD course webpage, syllabus, department page, or podcast/lecture page.\n"
-        "2. Rate My Professors page for the UCSD instructor.\n"
-        "3. Reddit — search reddit.com/r/ucsd for the course code and professor. "
-        "If you see a relevant thread title, you MUST click the link and read the actual post body "
-        "and top-voted comments. Do not stop at search results — navigate into the thread.\n"
-        "4. Other public web pages only if the first three source types do not answer a field.\n\n"
-        "Reddit deep-click protocol:\n"
-        "- Search Google for: site:reddit.com/r/ucsd {subject}\n"
-        "- If no results, navigate directly to reddit.com/r/ucsd and use the subreddit search bar.\n"
-        "- When you see a thread title that matches the course, CLICK IT and load the page.\n"
-        "- If a sign-in or age-verification overlay appears, dismiss it or scroll past it.\n"
-        "- Read the original post body and the top 3 upvoted comments.\n"
-        "- Extract a verbatim quote (do not paraphrase) and record the direct permalink URL.\n\n"
-        "Goal:\n"
-        "Return only these fields:\n"
-        "- attendance_required as true or false\n"
-        "- grade_breakdown as one short string\n"
-        "- course_webpage_url\n"
-        "- textbook_required as true or false\n"
-        "- podcasts_available as true or false\n"
-        "- student_sentiment_summary as one short sentence based only on Reddit and Rate My Professors\n"
-        "- rate_my_professor.rating\n"
-        "- rate_my_professor.would_take_again_percent\n"
-        "- rate_my_professor.difficulty\n"
-        "- rate_my_professor.url\n"
-        "- evidence: array of objects, each with:\n"
-        "    source: 'Reddit Insight' | 'Syllabus Snippet' | 'Course Page' | 'RMP'\n"
-        "    content: exact verbatim quote from the page (never paraphrase)\n"
-        "    url: direct permalink to the post, comment, or page\n"
-        "    relevance_score: 0.0 to 1.0\n"
-        "  If you opened a Reddit thread and found relevant content, evidence MUST contain at least one entry.\n"
-        "  If evidence is empty but you saw a relevant thread title, go back and click it.\n\n"
-        "Rules:\n"
-        "- Prefer official UCSD pages for attendance, grading, textbook, podcasts, and course webpage.\n"
-        "- Prefer Rate My Professors only for the instructor stats fields.\n"
-        "- Use Reddit and Rate My Professors for student_sentiment_summary, not official UCSD pages.\n"
-        "- Keep student_sentiment_summary concise and balanced, summarizing common opinions rather than a single extreme review.\n"
-        f"{instructor_rule}"
-        "- Only use an official course page or syllabus if the page clearly matches both the course code and the requested instructor.\n"
-        "- If an official page is for the same course code but a different instructor, do not use it for course_webpage_url or any logistics fields.\n"
-        "- Verify the instructor from the page header, syllabus, or another explicit page element before using that source.\n"
-        "- If you cannot find an official UCSD page that matches the requested instructor, return null for course_webpage_url and any official-page-only fields you cannot confirm.\n"
-        "- If multiple official UCSD pages match both the course and instructor, choose the most recent quarter.\n"
-        "- Compare quarter recency chronologically. Example: Spring 2026 is newer than Winter 2026, which is newer than Fall 2025.\n"
-        "- Prefer the most recent official UCSD offering that matches both the course and instructor, but instructor match is more important than quarter recency.\n"
-        "- Use null for any field you cannot confirm quickly.\n"
-        "- Keep the run short and stop once the requested fields are filled or confirmed unavailable.\n"
-        "- Return raw JSON only. Do not include markdown fences, explanations, or extra text.\n"
-    )
-
-
-def dedupe_courses(courses: list[CourseEntry]) -> list[CourseEntry]:
-    deduped: dict[tuple[str, str], CourseEntry] = {}
-    for course in courses:
-        key = (
-            " ".join(course.course_code.upper().split()),
-            " ".join(course.professor_name.upper().split()),
-        )
-        deduped.setdefault(key, course)
-    return list(deduped.values())
-
-
-async def run_course_logistics(
-    client: Any,
-    course_code: str,
-    instructor: str | None,
-    model: str,
-) -> CourseRunOutcome:
-    run = client.run(build_task(course_code, instructor), model=model)
-
-    async for _ in run:
-        pass
-
-    if run.result is None:
-        raise CourseResearchRunError("Browser Use run completed without a result.")
-
-    cost = build_cost_metadata(run.result)
-    raw_output = getattr(run.result, "output", None)
-
-    try:
-        logistics = parse_course_logistics_output(raw_output)
-    except ValidationError as exc:
-        status = getattr(run.result, "status", None)
-        last_step_summary = getattr(run.result, "last_step_summary", None)
-        raise CourseResearchRunError(
-            "Browser Use returned non-structured output "
-            f"(status={status!r}, last_step_summary={last_step_summary!r}, "
-            f"output={summarize_output(raw_output)}). Validation error: {exc}",
-            cost=cost,
-        ) from exc
-
-    return CourseRunOutcome(logistics=logistics, cost=cost)
-
+_log = logging.getLogger(__name__)
 
 _REMOTE_LOCATION_PREFIXES = ("RCLAS", "REMOTE", "ONLINE")
 
 
 def _is_remote_location(location: str) -> bool:
-    """Return True for UCSD remote/online classroom codes that have no physical map location."""
     upper = location.strip().upper()
     return any(upper.startswith(prefix) for prefix in _REMOTE_LOCATION_PREFIXES)
 
 
 def enrich_meetings_with_geocode(meetings: list[SectionMeeting]) -> list[SectionMeeting]:
     """Attach lat/lng/building_code to each meeting that has a non-empty location string."""
-    import logging
-    _log = logging.getLogger(__name__)
     enriched = []
     for meeting in meetings:
         if meeting.location and _is_remote_location(meeting.location):
@@ -578,6 +78,29 @@ def enrich_meetings_with_geocode(meetings: list[SectionMeeting]) -> list[Section
     return enriched
 
 
+def dedupe_courses(courses: list[CourseEntry]) -> list[CourseEntry]:
+    deduped: dict[tuple[str, str], CourseEntry] = {}
+    for course in courses:
+        key = (
+            " ".join(course.course_code.upper().split()),
+            " ".join(course.professor_name.upper().split()),
+        )
+        deduped.setdefault(key, course)
+    return list(deduped.values())
+
+
+def summarize_costs(results: list[CourseResearchResult]) -> BatchCostSummary:
+    summary = BatchCostSummary(run_count=len(results))
+    for result in results:
+        if not result.cost:
+            continue
+        summary.llm_cost_usd += result.cost.llm_cost_usd or 0.0
+        summary.browser_cost_usd += result.cost.browser_cost_usd or 0.0
+        summary.proxy_cost_usd += result.cost.proxy_cost_usd or 0.0
+        summary.total_cost_usd += result.cost.total_cost_usd or 0.0
+    return summary
+
+
 async def research_course(
     client: Any,
     cache_client: Any,
@@ -590,24 +113,34 @@ async def research_course(
 ) -> CourseResearchResult:
     label = entry.course_code if not entry.professor_name else f"{entry.course_code} / {entry.professor_name}"
     cache_error: str | None = None
-    sunset_grade_distribution: SunsetGradeDistribution | None = None
+
     if progress:
         progress(f"[{index}/{total}] Researching {label}")
 
-    # Geocode meeting locations (synchronous static lookup; fast, no I/O for known buildings)
     geocoded_meetings = enrich_meetings_with_geocode(list(entry.meetings))
 
+    sunset_grade_distribution = None
     try:
-        sunset_row = get_sunset_grade_distribution(
+        sunset_row, is_cross_course = get_sunset_grade_distribution(
             cache_client,
             course_code=entry.course_code,
             professor_name=entry.professor_name or None,
         )
-        sunset_grade_distribution = build_sunset_grade_distribution(sunset_row)
+        sunset_grade_distribution = build_sunset_grade_distribution(
+            sunset_row,
+            is_cross_course_fallback=is_cross_course,
+            source_course_code=sunset_row.course_code if (is_cross_course and sunset_row) else None,
+        )
+        if is_cross_course and sunset_row and progress:
+            progress(
+                f"[{index}/{total}] SunSET cross-course fallback for {label}: "
+                f"using {sunset_row.course_code} / {sunset_row.professor_name}"
+            )
     except Exception as exc:
         if progress:
             progress(f"[{index}/{total}] SunSET lookup failed for {label}: {exc}")
 
+    cache_row = None
     try:
         cache_row = get_course_research_cache(
             cache_client,
@@ -615,7 +148,6 @@ async def research_course(
             professor_name=entry.professor_name or None,
         )
     except Exception as exc:
-        cache_row = None
         cache_error = f"Cache lookup failed: {exc}"
         if progress:
             progress(f"[{index}/{total}] Cache lookup failed for {label}: {exc}")
@@ -744,6 +276,6 @@ async def research_courses(
     return BatchResearchResponse(
         input_source=input_source,
         course_count=len(results),
-        results=results,
-        cost_summary=summarize_costs(results),
+        results=list(results),
+        cost_summary=summarize_costs(list(results)),
     )
