@@ -16,6 +16,12 @@ import {
 import type { ClassDossier, CourseLogistics } from "@/types/dossier";
 import { ConflictBadge } from "@/components/dashboard/ConflictBadge";
 import { getSunsetSummary } from "@/lib/mappers/courseEntryToDossier";
+import { isExamSection } from "@/lib/mappers/dossiersToScheduleItems";
+
+function isDossierRemoteOnly(dossier: ClassDossier): boolean {
+  const regular = dossier.meetings.filter((m) => !isExamSection(m.section_type));
+  return regular.length > 0 && regular.every((m) => m.geocode_status === "remote");
+}
 
 type DossierModalTab = "summary" | "reddit" | "grades" | "syllabus";
 
@@ -290,11 +296,15 @@ export function ClassCard({
               </p>
               <h3 className="mt-0.5 flex flex-wrap items-baseline gap-1.5 font-[family-name:var(--font-outfit)] text-base font-semibold tracking-tight text-hub-text">
                 {dossier.courseCode}
-                {markerIndex != null && (
+                {markerIndex != null ? (
                   <span className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-hub-cyan/40 bg-hub-cyan/10 text-[10px] font-bold text-hub-cyan leading-none">
                     {markerIndex}
                   </span>
-                )}
+                ) : isDossierRemoteOnly(dossier) ? (
+                  <span className="inline-flex items-center rounded-full border border-purple-400/35 bg-purple-400/10 px-1.5 py-0 text-[9px] font-semibold uppercase tracking-wide text-purple-300 leading-5">
+                    Remote
+                  </span>
+                ) : null}
                 <span className="text-hub-text-muted font-normal text-sm">
                   {dossier.courseTitle}
                 </span>
@@ -524,11 +534,15 @@ export function ClassCard({
                         <p className="font-[family-name:var(--font-outfit)] text-base font-semibold text-hub-text">
                           {dossier.courseCode}
                         </p>
-                        {markerIndex != null && (
+                        {markerIndex != null ? (
                           <span className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-hub-cyan/40 bg-hub-cyan/10 text-[10px] font-bold text-hub-cyan">
                             {markerIndex}
                           </span>
-                        )}
+                        ) : isDossierRemoteOnly(dossier) ? (
+                          <span className="inline-flex items-center rounded-full border border-purple-400/35 bg-purple-400/10 px-1.5 py-0 text-[9px] font-semibold uppercase tracking-wide text-purple-300 leading-5">
+                            Remote
+                          </span>
+                        ) : null}
                       </div>
                       <p className="text-xs text-hub-text-muted">
                         {dossier.courseTitle} · {dossier.professorName}

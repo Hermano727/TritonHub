@@ -10,6 +10,8 @@ type CampusPathMapProps = {
   scheduleItems: ScheduleItem[];
   transitionInsights: TransitionInsight[];
   highlightedDossierId?: string | null;
+  /** Dossier ID → sequential display-order marker number */
+  dossierMarkerMap?: Map<string, number>;
 };
 
 export type PlottedItem = ScheduleItem & {
@@ -17,6 +19,8 @@ export type PlottedItem = ScheduleItem & {
   lng: number;
   /** All days this course meets at this location, e.g. ["Mon","Wed","Fri"] */
   days: string[];
+  /** Sequential marker number derived from dossier display order */
+  markerNum: number;
 };
 
 const CampusPathLeafletMap = dynamic(
@@ -39,6 +43,7 @@ export function CampusPathMap({
   scheduleItems,
   transitionInsights: _transitionInsights,
   highlightedDossierId,
+  dossierMarkerMap,
 }: CampusPathMapProps) {
   void _transitionInsights;
 
@@ -49,6 +54,7 @@ export function CampusPathMap({
 
   // Deduplicate by (title + buildingCode/location) so MWF lectures become one map pin.
   // Collect all days for each unique course-location pair.
+  // Resolve markerNum from dossierMarkerMap by matching item.id prefix to dossier ID.
   const plottedMap = new Map<string, PlottedItem>();
   for (const item of scheduleItems) {
     let lat: number | undefined = item.lat;
@@ -59,12 +65,20 @@ export function CampusPathMap({
     }
     if (lat == null || lng == null) continue;
 
+    // Resolve marker number: find which dossier this scheduleItem belongs to
+    let markerNum = 0;
+    if (dossierMarkerMap) {
+      for (const [dossierId, num] of dossierMarkerMap) {
+        if (item.id.startsWith(dossierId + "-")) { markerNum = num; break; }
+      }
+    }
+
     const key = `${item.title}|${item.buildingCode ?? item.location ?? ""}`;
     if (plottedMap.has(key)) {
       const existing = plottedMap.get(key)!;
       if (!existing.days.includes(item.day)) existing.days.push(item.day);
     } else {
-      plottedMap.set(key, { ...item, lat, lng, days: [item.day] });
+      plottedMap.set(key, { ...item, lat, lng, days: [item.day], markerNum });
     }
   }
   const plottedItems = [...plottedMap.values()];

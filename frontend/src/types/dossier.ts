@@ -41,7 +41,7 @@ export interface SectionMeeting {
   building_code?: string;
   lat?: number;
   lng?: number;
-  geocode_status?: "resolved" | "ambiguous" | "unresolved";
+  geocode_status?: "resolved" | "ambiguous" | "unresolved" | "remote";
 }
 
 /** User-defined block on the weekly grid (work, club, etc.) */
@@ -54,6 +54,13 @@ export interface ScheduleCommitment {
   dayCol: number;
   startMin: number;
   endMin: number;
+}
+
+export interface EvidenceItem {
+  source: string;
+  content: string;
+  url: string;
+  relevance_score: number;
 }
 
 export interface RateMyProfessorStats {
@@ -89,6 +96,7 @@ export interface CourseLogistics {
   podcasts_available: boolean | null;
   student_sentiment_summary: string | null;
   rate_my_professor: RateMyProfessorStats;
+  evidence?: EvidenceItem[];
 }
 
 export interface ClassDossier {
@@ -145,7 +153,7 @@ export interface ScheduleItem {
   buildingDisplayName?: string;
   lat?: number;
   lng?: number;
-  geocode_status?: "resolved" | "ambiguous" | "unresolved";
+  geocode_status?: "resolved" | "ambiguous" | "unresolved" | "remote";
 }
 
 export interface TransitionInsight {

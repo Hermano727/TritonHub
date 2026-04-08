@@ -17,7 +17,7 @@ export const campusLocations: CampusLocation[] = [
   { code: "LEDDN",  name: "Leichtag Family Foundation Hall",  x: 360, y: 380, lat: 32.87467, lng: -117.23684 },
   { code: "YORK",   name: "York Hall",                        x: 380, y: 360, lat: 32.87540, lng: -117.23561 },
   { code: "SOLIS",  name: "Solis Hall",                       x: 620, y: 150, lat: 32.88173, lng: -117.23394 },
-  { code: "PETER",  name: "Peterson Hall",                    x: 370, y: 330, lat: 32.87749, lng: -117.23528 },
+  { code: "PETER",  name: "Peterson Hall",                    x: 370, y: 330, lat: 32.8800126, lng: -117.240242 },
   { code: "GALB",   name: "Galbraith Hall",                   x: 390, y: 340, lat: 32.87711, lng: -117.23478 },
   { code: "GH",     name: "Galbraith Hall",                   x: 390, y: 340, lat: 32.87711, lng: -117.23478 },
 
@@ -31,7 +31,7 @@ export const campusLocations: CampusLocation[] = [
 
   // Science buildings
   { code: "APM",    name: "Applied Physics & Mathematics",    x: 440, y: 230, lat: 32.87938, lng: -117.24053 },
-  { code: "CTL",    name: "Clinical Teaching Facility",       x: 430, y: 410, lat: 32.87408, lng: -117.23522 },
+  { code: "CTL",    name: "Catalyst",                        x: 200, y: 80,  lat: 32.8804,  lng: -117.24165 },
   { code: "MAYER",  name: "Mayer Hall",                       x: 350, y: 360, lat: 32.87524, lng: -117.23732 },
   { code: "UREY",   name: "Urey Hall",                        x: 340, y: 370, lat: 32.87514, lng: -117.23784 },
   { code: "BONNER", name: "Bonner Hall",                      x: 320, y: 390, lat: 32.87438, lng: -117.23861 },
@@ -45,7 +45,7 @@ export const campusLocations: CampusLocation[] = [
   { code: "RBC",    name: "Robinson Building Complex",        x: 310, y: 330, lat: 32.87622, lng: -117.23860 },
   { code: "SSB",    name: "Social Sciences Building",         x: 330, y: 280, lat: 32.87764, lng: -117.23820 },
   { code: "SSC",    name: "Social Sciences Research Building", x: 335, y: 275, lat: 32.87790, lng: -117.23795 },
-  { code: "RWAC",   name: "Rady School of Management",        x: 560, y: 150, lat: 32.88268, lng: -117.23451 },
+  { code: "RWAC",   name: "Ridge Walk Academic Complex",      x: 200, y: 80,  lat: 32.8804,  lng: -117.24165 },
 
   // Arts / performance
   { code: "THEA",   name: "Theater District",                 x: 230, y: 250, lat: 32.87963, lng: -117.24175 },
@@ -68,7 +68,7 @@ export const campusLocations: CampusLocation[] = [
   // Recreation / student services
   { code: "RIMAC",  name: "RIMAC Arena",                      x: 240, y: 100, lat: 32.88460, lng: -117.24065 },
   { code: "SPIES",  name: "SPIES Recreation Center",          x: 230, y: 120, lat: 32.88390, lng: -117.24150 },
-  { code: "SERF",   name: "Student Services Center",          x: 420, y: 215, lat: 32.87960, lng: -117.23665 },
+  { code: "SERF",   name: "Science and Engineering Research Facility", x: 420, y: 215, lat: 32.879678, lng: -117.234780 },
 
   // Off campus
   { code: "UTC",    name: "UTC / Off Campus",                 x: 760, y: 60,  lat: 32.87090, lng: -117.21040 },

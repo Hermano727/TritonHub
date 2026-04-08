@@ -37,7 +37,7 @@ UCSD_BUILDINGS: dict[str, dict[str, Any]] = {
     "LEDDN":  {"display": "Leichtag Family Foundation Hall", "lat": 32.87467, "lng": -117.23684},
     "YORK":   {"display": "York Hall",                       "lat": 32.87540, "lng": -117.23561},
     "SOLIS":  {"display": "Solis Hall",                      "lat": 32.88173, "lng": -117.23394},
-    "PETER":  {"display": "Peterson Hall",                   "lat": 32.87749, "lng": -117.23528},
+    "PETER":  {"display": "Peterson Hall",                   "lat": 32.8800126, "lng": -117.240242},
     "GALB":   {"display": "Galbraith Hall",                  "lat": 32.87711, "lng": -117.23478},
     "GH":     {"display": "Galbraith Hall",                  "lat": 32.87711, "lng": -117.23478},
 
@@ -52,7 +52,7 @@ UCSD_BUILDINGS: dict[str, dict[str, Any]] = {
 
     # Science buildings
     "APM":    {"display": "Applied Physics & Mathematics",  "lat": 32.87938, "lng": -117.24053},
-    "CTL":    {"display": "Clinical Teaching Facility",    "lat": 32.87408, "lng": -117.23522},
+    "CTL":    {"display": "Catalyst",                       "lat": 32.8804,  "lng": -117.24165},
     "MAYER":  {"display": "Mayer Hall",                     "lat": 32.87524, "lng": -117.23732},
     "UREY":   {"display": "Urey Hall",                      "lat": 32.87514, "lng": -117.23784},
     "BONNER": {"display": "Bonner Hall",                    "lat": 32.87438, "lng": -117.23861},
@@ -63,7 +63,7 @@ UCSD_BUILDINGS: dict[str, dict[str, Any]] = {
     # Social sciences / humanities
     "RBC":    {"display": "Robinson Building Complex",      "lat": 32.87622, "lng": -117.23860},
     "SSB":    {"display": "Social Sciences Building",       "lat": 32.87764, "lng": -117.23820},
-    "RWAC":   {"display": "Rady School of Management",      "lat": 32.88268, "lng": -117.23451},
+    "RWAC":   {"display": "Ridge Walk Academic Complex",     "lat": 32.8804,  "lng": -117.24165},
 
     # Arts / performance
     "THEA":   {"display": "Theater District",               "lat": 32.87963, "lng": -117.24175},
@@ -84,7 +84,7 @@ UCSD_BUILDINGS: dict[str, dict[str, Any]] = {
 
     # Recreation
     "RIMAC":  {"display": "RIMAC Arena",                    "lat": 32.88460, "lng": -117.24065},
-    "SERF":   {"display": "Student Services Center",        "lat": 32.87960, "lng": -117.23665},
+    "SERF":   {"display": "Science and Engineering Research Facility", "lat": 32.879678, "lng": -117.234780},
 }
 
 # Alias → canonical code (handles Gemini variations and full display-name words)

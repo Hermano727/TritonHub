@@ -40,20 +40,26 @@ import {
 } from "@/hooks/useScheduleEditor";
 import type { ClassDossier, ScheduleCommitment, ScheduleEvaluation, ScheduleItem, TransitionInsight } from "@/types/dossier";
 
-/** Mirror CampusPathMap dedup to assign marker numbers to dossiers. */
+/**
+ * Returns true if ALL regular (non-exam) meetings for this dossier are remote/online
+ * and therefore have no physical map location.
+ */
+function isDossierRemoteOnly(dossier: ClassDossier): boolean {
+  const regular = dossier.meetings.filter((m) => !isExamSection(m.section_type));
+  return regular.length > 0 && regular.every((m) => m.geocode_status === "remote");
+}
+
+/** Assign marker numbers in top-down dossier display order (matches ClassCard list).
+ *  Remote-only dossiers are skipped — they get no number and no map pin. */
 function buildDossierMarkerMap(
   scheduleItems: ScheduleItem[],
   classes: ClassDossier[],
 ): Map<string, number> {
-  const seenKeys = new Set<string>();
   const result = new Map<string, number>();
   let counter = 1;
-  for (const item of scheduleItems) {
-    const key = `${item.title}|${item.buildingCode ?? item.location ?? ""}`;
-    if (seenKeys.has(key)) continue;
-    seenKeys.add(key);
-    const dossier = classes.find((c) => item.id.startsWith(c.id + "-"));
-    if (dossier && !result.has(dossier.id)) {
+  for (const dossier of classes) {
+    if (isDossierRemoteOnly(dossier)) continue;
+    if (scheduleItems.some((item) => item.id.startsWith(dossier.id + "-"))) {
       result.set(dossier.id, counter++);
     }
   }
@@ -195,6 +201,16 @@ export const DossierScheduleWorkspace = forwardRef(function DossierScheduleWorks
     setBlockError(null);
     setAddOpen(true);
   }, []);
+
+  const deleteMeeting = useCallback((block: CourseBlock) => {
+    const updatedClasses = classes.map((d) => {
+      if (d.id !== block.dossierId) return d;
+      const meetings = d.meetings.filter((_, idx) => idx !== block.meetingIdx);
+      return { ...d, meetings };
+    });
+    apply({ classes: updatedClasses, commitments });
+    setEditingBlock(null);
+  }, [apply, classes, commitments]);
 
   const openEditModal = useCallback((block: CourseBlock | CommitmentBlock) => {
     setEditError(null);
@@ -516,7 +532,7 @@ export const DossierScheduleWorkspace = forwardRef(function DossierScheduleWorks
             transition={{ duration: 0.45, delay: 0.1, ease: [0.22, 1, 0.36, 1] }}
             className={mainTab === "schedule" ? "hidden" : ""}
           >
-            <CampusPathMap scheduleItems={scheduleItems} transitionInsights={transitionInsights} />
+            <CampusPathMap scheduleItems={scheduleItems} transitionInsights={transitionInsights} dossierMarkerMap={dossierMarkerMap} />
           </motion.div>
         ) : null}
 
@@ -669,6 +685,7 @@ export const DossierScheduleWorkspace = forwardRef(function DossierScheduleWorks
                   scheduleItems={scheduleItems}
                   transitionInsights={transitionInsights}
                   highlightedDossierId={selectedClassId}
+                  dossierMarkerMap={dossierMarkerMap}
                 />
               </motion.div>
             )}
@@ -1114,7 +1131,13 @@ export const DossierScheduleWorkspace = forwardRef(function DossierScheduleWorks
                     Delete
                   </button>
                 ) : (
-                  <span />
+                  <button
+                    type="button"
+                    onClick={() => deleteMeeting(editingBlock)}
+                    className="rounded-lg px-3 py-2 text-sm font-medium text-hub-danger hover:bg-hub-danger/10"
+                  >
+                    Remove meeting
+                  </button>
                 )}
                 <div className="flex gap-2">
                   <button

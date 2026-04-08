@@ -3,7 +3,7 @@
 import { useEffect, useMemo } from "react";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
-import { MapContainer, Marker, Tooltip, Popup, useMap } from "react-leaflet";
+import { MapContainer, Marker, Tooltip, useMap } from "react-leaflet";
 import type { PlottedItem } from "./CampusPathMap";
 
 function fmt12(hhmm: string): string {
@@ -13,11 +13,6 @@ function fmt12(hhmm: string): string {
   const period = h >= 12 ? "PM" : "AM";
   const hour = h % 12 || 12;
   return `${hour}:${String(m).padStart(2, "0")} ${period}`;
-}
-
-function getGoogleMapsUrl(locationName: string) {
-  const query = `${locationName}, UC San Diego`;
-  return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(query)}`;
 }
 
 type CampusPathLeafletMapProps = {
@@ -45,8 +40,8 @@ const TILE_OPTIONS: TileLayerOptions = {
   attribution: "&copy; OpenStreetMap contributors",
 };
 
-function makeSequenceIcon(order: number, uncertain = false, highlighted = false) {
-  const label = String(order);
+/** Single-class marker: shows the marker number */
+function makeSingleIcon(num: number, uncertain = false, highlighted = false) {
   const cls = highlighted
     ? "rp-seq-icon__inner rp-seq-icon__inner--highlighted"
     : uncertain
@@ -54,17 +49,36 @@ function makeSequenceIcon(order: number, uncertain = false, highlighted = false)
     : "rp-seq-icon__inner";
   return L.divIcon({
     className: "rp-seq-icon",
-    html: `<div class="${cls}">${label}</div>`,
+    html: `<div class="${cls}">${num}</div>`,
     iconSize: [28, 28],
     iconAnchor: [14, 14],
   });
 }
 
+/** Multi-class marker: shows count with a stacked badge style */
+function makeMultiIcon(count: number, highlighted = false) {
+  const cls = highlighted
+    ? "rp-seq-icon__inner rp-seq-icon__inner--highlighted rp-seq-icon__inner--multi"
+    : "rp-seq-icon__inner rp-seq-icon__inner--multi";
+  return L.divIcon({
+    className: "rp-seq-icon",
+    html: `<div class="${cls}"><span class="rp-seq-icon__count">${count}</span></div>`,
+    iconSize: [34, 34],
+    iconAnchor: [17, 17],
+  });
+}
+
+/** A group of courses that share the same lat/lng (same building) */
+type LocationGroup = {
+  key: string;
+  lat: number;
+  lng: number;
+  items: PlottedItem[];
+};
+
 class FallbackTileLayer extends L.TileLayer {
   private localUrl: string;
-
   private remoteUrl: string;
-
   private localOptions: TileLayerOptions;
 
   constructor(localUrl: string, remoteUrl: string, options: TileLayerOptions) {
@@ -128,11 +142,7 @@ function HybridTileLayer() {
   return null;
 }
 
-function FitToData({
-  points,
-}: {
-  points: Array<{ lat: number; lng: number }>;
-}) {
+function FitToData({ points }: { points: Array<{ lat: number; lng: number }> }) {
   const map = useMap();
 
   useEffect(() => {
@@ -144,7 +154,6 @@ function FitToData({
       map.setView([points[0].lat, points[0].lng], 16, { animate: false });
       return;
     }
-
     const bounds = L.latLngBounds(points.map((p) => [p.lat, p.lng] as [number, number]));
     map.fitBounds(bounds.pad(0.2), { animate: false });
   }, [map, points]);
@@ -156,28 +165,23 @@ export function CampusPathLeafletMap({
   plottedItems,
   highlightedDossierId,
 }: CampusPathLeafletMapProps) {
-  const fitPoints = useMemo(
-    () => [...plottedItems.map((item) => ({ lat: item.lat, lng: item.lng }))],
-    [plottedItems],
-  );
-
-  const sequenceIcons = useMemo(
-    () => plottedItems.map((item, index) => {
-      const highlighted = highlightedDossierId != null && item.id.startsWith(highlightedDossierId + "-");
-      return makeSequenceIcon(index + 1, item.geocode_status === "unresolved", highlighted);
-    }),
-    [plottedItems, highlightedDossierId],
-  );
-
-  // Detect items sharing the same lat/lng (different courses, same building)
-  const locationCounts = useMemo(() => {
-    const counts = new Map<string, number>();
+  // Group items sharing the same lat/lng into one map pin
+  const locationGroups = useMemo<LocationGroup[]>(() => {
+    const groups = new Map<string, LocationGroup>();
     for (const item of plottedItems) {
-      const k = `${item.lat.toFixed(5)},${item.lng.toFixed(5)}`;
-      counts.set(k, (counts.get(k) ?? 0) + 1);
+      const k = `${item.lat.toFixed(4)},${item.lng.toFixed(4)}`;
+      if (!groups.has(k)) {
+        groups.set(k, { key: k, lat: item.lat, lng: item.lng, items: [] });
+      }
+      groups.get(k)!.items.push(item);
     }
-    return counts;
+    return [...groups.values()];
   }, [plottedItems]);
+
+  const fitPoints = useMemo(
+    () => locationGroups.map((g) => ({ lat: g.lat, lng: g.lng })),
+    [locationGroups],
+  );
 
   return (
     <div className="relative h-[280px] overflow-hidden rounded-xl border border-white/[0.08] bg-[#071124]">
@@ -192,78 +196,85 @@ export function CampusPathLeafletMap({
         <HybridTileLayer />
         <FitToData points={fitPoints} />
 
-        {plottedItems.map((item, index) => (
-          <Marker
-            key={`${item.id}-${index}`}
-            position={[item.lat, item.lng]}
-            icon={sequenceIcons[index]}
-          >
-            <Tooltip direction="top" offset={[0, -20]} opacity={1} className="rp-tooltip">
-              <div className="rp-tooltip__title">{item.title}</div>
-              {item.location && (
-                <div className="rp-tooltip__sub">{item.location}</div>
-              )}
-              {item.days?.length > 0 && (
-                <div className="rp-tooltip__sub">{item.days.join(" · ")}</div>
-              )}
-              {item.start && item.end && (
-                <div className="rp-tooltip__time">{fmt12(item.start)} — {fmt12(item.end)}</div>
-              )}
-            </Tooltip>
-            <Popup className="rp-dark-popup">
-              <div style={{ minWidth: 220, padding: "12px 14px" }}>
-                {/* Header row: title + order badge */}
-                <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 8, marginBottom: 8 }}>
-                  <div>
-                    <div style={{ fontSize: 13, fontWeight: 700, color: "#e2e8f0" }}>{item.title}</div>
-                    {item.location && (
-                      <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 3 }}>
-                        {item.buildingDisplayName ? `${item.buildingDisplayName} · ` : ""}{item.location}
+        {locationGroups.map((group) => {
+          const isMulti = group.items.length > 1;
+          const isHighlighted =
+            highlightedDossierId != null &&
+            group.items.some((item) => item.id.startsWith(highlightedDossierId + "-"));
+          const isUncertain = group.items.some(
+            (item) => item.geocode_status === "unresolved",
+          );
+
+          const icon = isMulti
+            ? makeMultiIcon(group.items.length, isHighlighted)
+            : makeSingleIcon(
+                group.items[0].markerNum || 1,
+                isUncertain,
+                isHighlighted,
+              );
+
+          return (
+            <Marker
+              key={group.key}
+              position={[group.lat, group.lng]}
+              icon={icon}
+            >
+              <Tooltip
+                direction="top"
+                offset={[0, isMulti ? -24 : -20]}
+                opacity={1}
+                className="rp-tooltip rp-tooltip--multi"
+              >
+                {isMulti ? (
+                  <>
+                    <div className="rp-tooltip__multi-header">
+                      {group.items.length} classes here
+                    </div>
+                    {group.items.map((item) => (
+                      <div key={item.id} className="rp-tooltip__multi-row">
+                        <span className="rp-tooltip__num">
+                          {item.markerNum || "·"}
+                        </span>
+                        <span>
+                          <div className="rp-tooltip__title">{item.title}</div>
+                          {item.days?.length > 0 && (
+                            <div className="rp-tooltip__sub">
+                              {item.days.join(" · ")}{" "}
+                              {item.start && item.end
+                                ? `· ${fmt12(item.start)}–${fmt12(item.end)}`
+                                : ""}
+                            </div>
+                          )}
+                        </span>
+                      </div>
+                    ))}
+                  </>
+                ) : (
+                  <>
+                    <div className="rp-tooltip__title">{group.items[0].title}</div>
+                    {group.items[0].location && (
+                      <div className="rp-tooltip__sub">{group.items[0].location}</div>
+                    )}
+                    {group.items[0].days?.length > 0 && (
+                      <div className="rp-tooltip__sub">
+                        {group.items[0].days.join(" · ")}
                       </div>
                     )}
-                  </div>
-                  <span style={{ flexShrink: 0, background: "rgba(0,212,255,0.08)", border: "1px solid rgba(0,212,255,0.22)", borderRadius: 6, padding: "2px 7px", fontSize: 11, color: "#00d4ff", fontWeight: 600 }}>
-                    #{index + 1}
-                  </span>
-                </div>
-
-                {/* Days */}
-                {item.days?.length > 0 && (
-                  <div style={{ fontSize: 11, color: "#64748b", marginBottom: 4 }}>
-                    {item.days.join(" · ")}
-                  </div>
+                    {group.items[0].start && group.items[0].end && (
+                      <div className="rp-tooltip__time">
+                        {fmt12(group.items[0].start)} — {fmt12(group.items[0].end)}
+                      </div>
+                    )}
+                  </>
                 )}
-
-                {/* Time */}
-                {item.start && item.end && (
-                  <div style={{ fontSize: 12, color: "#00d4ff", fontWeight: 600, marginBottom: 10 }}>
-                    {fmt12(item.start)} — {fmt12(item.end)}
-                  </div>
-                )}
-
-                {locationCounts.get(`${item.lat.toFixed(5)},${item.lng.toFixed(5)}`)! > 1 && (
-                  <div style={{ fontSize: 11, color: "#fcd34d", marginBottom: 8 }}>
-                    Multiple classes meet here
-                  </div>
-                )}
-
-                {/* Google Maps link */}
-                <a
-                  href={getGoogleMapsUrl(item.buildingDisplayName ?? item.location ?? item.title)}
-                  target="_blank"
-                  rel="noreferrer"
-                  style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, color: "#00d4ff", fontWeight: 500, textDecoration: "none", borderTop: "1px solid rgba(255,255,255,0.06)", paddingTop: 8, width: "100%" }}
-                >
-                  Open in Google Maps ↗
-                </a>
-              </div>
-            </Popup>
-          </Marker>
-        ))}
+              </Tooltip>
+            </Marker>
+          );
+        })}
       </MapContainer>
 
       <div className="pointer-events-none absolute left-3 top-3 rounded-full border border-white/[0.16] bg-slate-950/55 px-2 py-1 text-[11px] text-hub-text-muted">
-        Drag to pan · scroll to zoom
+        Hover pins · scroll to zoom
       </div>
     </div>
   );

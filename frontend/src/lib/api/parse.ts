@@ -9,7 +9,7 @@ export interface SectionMeeting {
   building_code?: string;
   lat?: number;
   lng?: number;
-  geocode_status?: "resolved" | "ambiguous" | "unresolved";
+  geocode_status?: "resolved" | "ambiguous" | "unresolved" | "remote";
 }
 
 export interface CourseEntry {

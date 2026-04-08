@@ -1,3 +1,6 @@
+import logging
+logging.getLogger("app.services.geocode").setLevel(logging.DEBUG)
+
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 

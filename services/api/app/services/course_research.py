@@ -37,6 +37,25 @@ class RateMyProfessorStats(BaseModel):
     url: str | None = Field(default=None, description="Direct Rate My Professors page URL")
 
 
+class EvidenceItem(BaseModel):
+    source: str = Field(
+        ...,
+        description="Source type: 'Reddit Insight', 'Syllabus Snippet', 'Course Page', etc.",
+    )
+    content: str = Field(
+        ...,
+        description="Verbatim quote extracted from the source — do NOT paraphrase",
+    )
+    url: str = Field(
+        ...,
+        description="Direct permalink URL to the specific post, comment, or page section",
+    )
+    relevance_score: float = Field(
+        ...,
+        description="0.0 to 1.0 — how directly relevant this quote is to the course",
+    )
+
+
 class CourseLogistics(BaseModel):
     attendance_required: bool | None = Field(
         default=None,
@@ -66,6 +85,13 @@ class CourseLogistics(BaseModel):
         ),
     )
     rate_my_professor: RateMyProfessorStats = Field(default_factory=RateMyProfessorStats)
+    evidence: list[EvidenceItem] = Field(
+        default_factory=list,
+        description=(
+            "Verbatim quotes from Reddit threads, syllabus pages, or other sources. "
+            "Each item must be a direct quote — never paraphrase."
+        ),
+    )
 
 
 class CourseRunCost(BaseModel):
@@ -416,8 +442,17 @@ def build_task(course: str, instructor: str | None) -> str:
         "Priority sources:\n"
         "1. Official UCSD course webpage, syllabus, department page, or podcast/lecture page.\n"
         "2. Rate My Professors page for the UCSD instructor.\n"
-        "3. Relevant Reddit discussions about the class or professor.\n"
+        "3. Reddit — search reddit.com/r/ucsd for the course code and professor. "
+        "If you see a relevant thread title, you MUST click the link and read the actual post body "
+        "and top-voted comments. Do not stop at search results — navigate into the thread.\n"
         "4. Other public web pages only if the first three source types do not answer a field.\n\n"
+        "Reddit deep-click protocol:\n"
+        "- Search Google for: site:reddit.com/r/ucsd {subject}\n"
+        "- If no results, navigate directly to reddit.com/r/ucsd and use the subreddit search bar.\n"
+        "- When you see a thread title that matches the course, CLICK IT and load the page.\n"
+        "- If a sign-in or age-verification overlay appears, dismiss it or scroll past it.\n"
+        "- Read the original post body and the top 3 upvoted comments.\n"
+        "- Extract a verbatim quote (do not paraphrase) and record the direct permalink URL.\n\n"
         "Goal:\n"
         "Return only these fields:\n"
         "- attendance_required as true or false\n"
@@ -429,7 +464,14 @@ def build_task(course: str, instructor: str | None) -> str:
         "- rate_my_professor.rating\n"
         "- rate_my_professor.would_take_again_percent\n"
         "- rate_my_professor.difficulty\n"
-        "- rate_my_professor.url\n\n"
+        "- rate_my_professor.url\n"
+        "- evidence: array of objects, each with:\n"
+        "    source: 'Reddit Insight' | 'Syllabus Snippet' | 'Course Page' | 'RMP'\n"
+        "    content: exact verbatim quote from the page (never paraphrase)\n"
+        "    url: direct permalink to the post, comment, or page\n"
+        "    relevance_score: 0.0 to 1.0\n"
+        "  If you opened a Reddit thread and found relevant content, evidence MUST contain at least one entry.\n"
+        "  If evidence is empty but you saw a relevant thread title, go back and click it.\n\n"
         "Rules:\n"
         "- Prefer official UCSD pages for attendance, grading, textbook, podcasts, and course webpage.\n"
         "- Prefer Rate My Professors only for the instructor stats fields.\n"
@@ -492,13 +534,28 @@ async def run_course_logistics(
     return CourseRunOutcome(logistics=logistics, cost=cost)
 
 
+_REMOTE_LOCATION_PREFIXES = ("RCLAS", "REMOTE", "ONLINE")
+
+
+def _is_remote_location(location: str) -> bool:
+    """Return True for UCSD remote/online classroom codes that have no physical map location."""
+    upper = location.strip().upper()
+    return any(upper.startswith(prefix) for prefix in _REMOTE_LOCATION_PREFIXES)
+
+
 def enrich_meetings_with_geocode(meetings: list[SectionMeeting]) -> list[SectionMeeting]:
     """Attach lat/lng/building_code to each meeting that has a non-empty location string."""
     import logging
     _log = logging.getLogger(__name__)
     enriched = []
     for meeting in meetings:
-        if meeting.location and meeting.lat is None:
+        if meeting.location and _is_remote_location(meeting.location):
+            _log.info(
+                "[geocode] remote     location=%r section_type=%r — no physical pin",
+                meeting.location, meeting.section_type,
+            )
+            meeting = meeting.model_copy(update={"geocode_status": "remote"})
+        elif meeting.location and meeting.lat is None:
             _log.info("[geocode] resolving meeting location=%r section_type=%r", meeting.location, meeting.section_type)
             result = geocode_location(meeting.location)
             if result:
