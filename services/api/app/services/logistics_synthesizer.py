@@ -72,10 +72,36 @@ def _build_synthesis_prompt(raw: ResearchRawData) -> str:
         f"{k}={'✓' if v else '✗'}" for k, v in raw.tier_coverage.items()
     )
 
+    # Pre-scored Reddit evidence from Tier 0.5 (Gemini Flash scoring)
+    if raw.pre_extracted_reddit_evidence:
+        pre_ev_lines = [
+            f"  [{i + 1}] (relevance={e.relevance_score:.2f}) \"{e.content}\" — {e.url}"
+            for i, e in enumerate(raw.pre_extracted_reddit_evidence)
+        ]
+        pre_evidence_section = (
+            "=== PRE-SCORED REDDIT EVIDENCE (already relevance-filtered — prefer these for evidence[] output) ===\n"
+            + "\n".join(pre_ev_lines)
+            + "\n\n"
+        )
+        evidence_rule = (
+            "- evidence: up to 5 items. Use the PRE-SCORED REDDIT EVIDENCE entries first (they are already "
+            "verbatim and relevance-filtered). Supplement with additional Reddit quotes or RMP stats as needed. "
+            "For RMP, create one EvidenceItem with source='RMP' summarizing the stats. "
+            "content must be a direct quote — never paraphrase.\n"
+        )
+    else:
+        pre_evidence_section = ""
+        evidence_rule = (
+            "- evidence: up to 5 items. Prefer verbatim Reddit quotes with post URLs. "
+            "For RMP, create one EvidenceItem with source='RMP' summarizing the stats. "
+            "content must be a direct quote — never paraphrase.\n"
+        )
+
     return (
         f"You are a UCSD course research assistant synthesizing raw data about "
         f"{course} taught by {prof}.\n\n"
         f"Data coverage: {tier_summary}\n\n"
+        f"{pre_evidence_section}"
         f"=== REDDIT DATA ({len(raw.reddit_posts)} posts) ===\n"
         f"{reddit_section}\n\n"
         f"=== RATE MY PROFESSORS ===\n"
@@ -84,25 +110,23 @@ def _build_synthesis_prompt(raw: ResearchRawData) -> str:
         f"{catalog_section}\n\n"
         f"=== UCSD SYLLABUS SNIPPETS ===\n"
         f"{syllabus_section}\n\n"
-        "=== SYNTHESIS RULES ===\n"
-        "- attendance_required: true/false only if Reddit or syllabus explicitly confirms it. null if ambiguous.\n"
-        "- grade_breakdown: compact string like 'HW 30%, Midterm 30%, Final 40%'. "
-        "  Extract from syllabus first. NEVER fabricate percentages not in the source data.\n"
-        "- textbook_required: true only if 'required textbook' or 'buy' appears in syllabus or Reddit.\n"
-        "- podcasts_available: true only if podcasts.ucsd.edu or 'podcast'/'recorded' appears explicitly.\n"
-        "- student_sentiment_summary: 1 balanced sentence from Reddit + RMP. "
-        "  Do not be purely negative or positive unless overwhelming evidence.\n"
-        "- evidence: up to 5 items. Prefer verbatim Reddit quotes with post URLs. "
-        "  For RMP, create one EvidenceItem with source='RMP' summarizing the stats.\n"
-        "  content must be a direct quote — never paraphrase.\n"
-        "- professor_info_found: set false ONLY if no Reddit posts AND no RMP data "
-        "  AND no syllabus matched this instructor. Otherwise true.\n"
-        "- general_course_overview: 2-3 sentence summary from the UCSD catalog description. "
-        "  Populate regardless of professor_info_found.\n"
-        "- general_professor_overview: 1-2 sentences about the professor's background if any source "
-        "  mentions them. Populate regardless of professor_info_found. null if no data at all.\n"
-        "- rate_my_professor: populate from RMP data if available, else leave all fields null.\n"
-        "- Return null for any field where no evidence exists — never fabricate.\n"
+        f"=== SYNTHESIS RULES ===\n"
+        f"- attendance_required: true/false only if Reddit or syllabus explicitly confirms it. null if ambiguous.\n"
+        f"- grade_breakdown: compact string like 'HW 30%, Midterm 30%, Final 40%'. "
+        f"  Extract from syllabus first. NEVER fabricate percentages not in the source data.\n"
+        f"- textbook_required: true only if 'required textbook' or 'buy' appears in syllabus or Reddit.\n"
+        f"- podcasts_available: true only if podcasts.ucsd.edu or 'podcast'/'recorded' appears explicitly.\n"
+        f"- student_sentiment_summary: 1 balanced sentence from Reddit + RMP. "
+        f"  Do not be purely negative or positive unless overwhelming evidence.\n"
+        f"{evidence_rule}"
+        f"- professor_info_found: set false ONLY if no Reddit posts AND no RMP data "
+        f"  AND no syllabus matched this instructor. Otherwise true.\n"
+        f"- general_course_overview: 2-3 sentence summary from the UCSD catalog description. "
+        f"  Populate regardless of professor_info_found.\n"
+        f"- general_professor_overview: 1-2 sentences about the professor's background if any source "
+        f"  mentions them. Populate regardless of professor_info_found. null if no data at all.\n"
+        f"- rate_my_professor: populate from RMP data if available, else leave all fields null.\n"
+        f"- Return null for any field where no evidence exists — never fabricate.\n"
     )
 
 

@@ -127,6 +127,8 @@ class ResearchRawData(BaseModel):
     ucsd_syllabus_url: str | None = None
     tier_coverage: dict[str, bool] = Field(default_factory=dict)
     # e.g. {"reddit": True, "rmp": True, "ucsd_catalog": False, "ucsd_syllabus": False}
+    # Pre-scored by Tier 0.5 (Gemini Flash) — synthesizer should prefer these for evidence[].
+    pre_extracted_reddit_evidence: list[EvidenceItem] = Field(default_factory=list)
 
 
 class CourseRunCost(BaseModel):

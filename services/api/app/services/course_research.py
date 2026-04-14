@@ -124,26 +124,41 @@ def summarize_costs(results: list[CourseResearchResult]) -> BatchCostSummary:
 # Tiered pipeline (Tier 0-3: free/cheap alternatives to Browser Use)
 # ---------------------------------------------------------------------------
 
+async def _no_rmp() -> tuple[None, None]:
+    """Placeholder coroutine for when professor_name is unknown."""
+    return (None, None)
+
+
 async def _research_via_tiered_pipeline(
     course_code: str,
     professor_name: str | None,
 ) -> CourseRunOutcome:
     """
-    Execute Tiers 0-3 concurrently (Reddit, RMP, UCSD scrape, Gemini synthesis).
+    Execute Tiers 0-3 concurrently (Reddit, RMP, UCSD scrape, Gemini synthesis),
+    then Tier 0.5 (Gemini Reddit scoring) sequentially after Tier 0 returns.
+
     All data-gathering tiers catch their own errors and return empty values — they
-    never propagate exceptions.  Only Tier 3 (Gemini) can raise.
+    never propagate exceptions.  Only Tier 3 (Gemini synthesis) can raise.
     """
-    from app.services.reddit_client import search_reddit_ucsd
+    from app.services.reddit_client import search_reddit_ucsd, score_and_filter_reddit_posts
     from app.services.rmp_client import fetch_rmp_stats
     from app.services.ucsd_scraper import fetch_ucsd_course_description, fetch_ucsd_syllabus_snippets
     from app.services.logistics_synthesizer import synthesize_logistics
     from app.models.research import ResearchRawData
 
+    # Tiers 0-2: run concurrently
     reddit_posts, rmp_result, catalog_result, syllabus_result = await asyncio.gather(
-        search_reddit_ucsd(course_code),
-        fetch_rmp_stats(professor_name) if professor_name else asyncio.coroutine(lambda: (None, None))(),
+        search_reddit_ucsd(course_code, professor_name=professor_name),
+        fetch_rmp_stats(professor_name) if professor_name else _no_rmp(),
         fetch_ucsd_course_description(course_code),
         fetch_ucsd_syllabus_snippets(course_code, professor_name),
+    )
+
+    # Tier 0.5: Gemini relevance scoring on Reddit results (sequential — depends on Tier 0)
+    reddit_posts, pre_extracted_evidence = await score_and_filter_reddit_posts(
+        reddit_posts,
+        course_code=course_code,
+        professor_name=professor_name,
     )
 
     rmp_stats, rmp_url = rmp_result if rmp_result else (None, None)
@@ -154,6 +169,7 @@ async def _research_via_tiered_pipeline(
         course_code=course_code,
         professor_name=professor_name,
         reddit_posts=reddit_posts,
+        pre_extracted_reddit_evidence=pre_extracted_evidence,
         rmp_stats=rmp_stats,
         rmp_url=rmp_url,
         ucsd_course_description=course_description,

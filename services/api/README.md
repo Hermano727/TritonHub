@@ -192,6 +192,20 @@ curl -X POST http://127.0.0.1:8000/plans ^
 | `POST` | `/api/research-screenshot` | Multipart image → parse + Browser Use research + shared Supabase cache |
 | `POST` | `/plans` | Create `saved_plans` row (Bearer = Supabase user JWT) |
 
+## 5. Pre-MVP Testing Commands
+
+See what CSE + MATH pairs would be cached (no API calls)
+
+```
+cd services/api
+python -m app.scripts.precache_courses --prefix CSE,MATH --dry-run
+```
+
+Cache high-traffic departments before launch
+```
+python -m app.scripts.precache_courses --prefix CSE,MATH,COGS,ECE,BIOL,PSYC,MGT --delay 2.0
+```
+
 ## Troubleshooting
 
 | Issue | What to try |

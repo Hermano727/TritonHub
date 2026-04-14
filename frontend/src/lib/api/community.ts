@@ -7,7 +7,9 @@ import type {
   PostDetail,
   PostListResponse,
   PostSummary,
+  SortBy,
   UpvoteResponse,
+  VoteResponse,
 } from "@/types/community";
 
 async function getAccessToken(): Promise<string> {
@@ -24,6 +26,10 @@ async function getAccessToken(): Promise<string> {
 export async function listPosts(opts?: {
   courseCode?: string;
   professorName?: string;
+  search?: string;
+  sortBy?: SortBy;
+  department?: string;
+  courseNumber?: string;
   page?: number;
 }): Promise<PostListResponse> {
   const token = await getAccessToken();
@@ -31,6 +37,10 @@ export async function listPosts(opts?: {
   const params = new URLSearchParams();
   if (opts?.courseCode) params.set("course_code", opts.courseCode);
   if (opts?.professorName) params.set("professor_name", opts.professorName);
+  if (opts?.search) params.set("search", opts.search);
+  if (opts?.sortBy) params.set("sort_by", opts.sortBy);
+  if (opts?.department) params.set("department", opts.department);
+  if (opts?.courseNumber) params.set("course_number", opts.courseNumber);
   if (opts?.page) params.set("page", String(opts.page));
 
   const res = await fetch(
@@ -39,6 +49,15 @@ export async function listPosts(opts?: {
   );
   if (!res.ok) throw new Error(`listPosts failed: ${res.status}`);
   return res.json() as Promise<PostListResponse>;
+}
+
+export async function getDepartments(): Promise<string[]> {
+  const token = await getAccessToken();
+  const res = await fetch(`${getApiBaseUrl()}/api/community/departments`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) throw new Error(`getDepartments failed: ${res.status}`);
+  return res.json() as Promise<string[]>;
 }
 
 export async function getPost(postId: string): Promise<PostDetail> {
@@ -101,6 +120,51 @@ export async function toggleUpvote(postId: string): Promise<UpvoteResponse> {
   );
   if (!res.ok) throw new Error(`toggleUpvote failed: ${res.status}`);
   return res.json() as Promise<UpvoteResponse>;
+}
+
+export async function togglePostDownvote(postId: string): Promise<VoteResponse> {
+  const token = await getAccessToken();
+  const res = await fetch(
+    `${getApiBaseUrl()}/api/community/${postId}/downvote`,
+    {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+    },
+  );
+  if (!res.ok) throw new Error(`togglePostDownvote failed: ${res.status}`);
+  return res.json() as Promise<VoteResponse>;
+}
+
+export async function toggleReplyUpvote(
+  postId: string,
+  replyId: string,
+): Promise<VoteResponse> {
+  const token = await getAccessToken();
+  const res = await fetch(
+    `${getApiBaseUrl()}/api/community/${postId}/replies/${replyId}/upvote`,
+    {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+    },
+  );
+  if (!res.ok) throw new Error(`toggleReplyUpvote failed: ${res.status}`);
+  return res.json() as Promise<VoteResponse>;
+}
+
+export async function toggleReplyDownvote(
+  postId: string,
+  replyId: string,
+): Promise<VoteResponse> {
+  const token = await getAccessToken();
+  const res = await fetch(
+    `${getApiBaseUrl()}/api/community/${postId}/replies/${replyId}/downvote`,
+    {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+    },
+  );
+  if (!res.ok) throw new Error(`toggleReplyDownvote failed: ${res.status}`);
+  return res.json() as Promise<VoteResponse>;
 }
 
 export async function getNotifications(): Promise<NotificationOut[]> {

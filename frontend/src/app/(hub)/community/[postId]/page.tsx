@@ -40,9 +40,15 @@ export default async function ThreadPage({ params }: Props) {
     postId: row.post_id as string,
     userId: row.user_id as string,
     body: row.body as string,
+    parentReplyId: (row.parent_reply_id as string | null) ?? null,
+    isAnonymous: (row.is_anonymous as boolean) ?? false,
     authorDisplayName: (row.author_display_name as string) ?? "Anonymous",
     createdAt: row.created_at as string,
     updatedAt: row.updated_at as string,
+    upvoteCount: (row.upvote_count as number) ?? 0,
+    downvoteCount: (row.downvote_count as number) ?? 0,
+    userHasUpvoted: (row.user_has_upvoted as boolean) ?? false,
+    userHasDownvoted: (row.user_has_downvoted as boolean) ?? false,
   }));
 
   const post: PostDetail = {
@@ -53,12 +59,15 @@ export default async function ThreadPage({ params }: Props) {
     courseCode: (rawPost.course_code as string | null) ?? null,
     professorName: (rawPost.professor_name as string | null) ?? null,
     isAnonymous: (rawPost.is_anonymous as boolean) ?? false,
+    generalTags: (rawPost.general_tags as string[]) ?? [],
     authorDisplayName: (rawPost.author_display_name as string) ?? "Anonymous",
     createdAt: rawPost.created_at as string,
     updatedAt: rawPost.updated_at as string,
     replyCount: (rawPost.reply_count as number) ?? 0,
     upvoteCount: (rawPost.upvote_count as number) ?? 0,
+    downvoteCount: (rawPost.downvote_count as number) ?? 0,
     userHasUpvoted: (rawPost.user_has_upvoted as boolean) ?? false,
+    userHasDownvoted: (rawPost.user_has_downvoted as boolean) ?? false,
     replies,
   };
 
