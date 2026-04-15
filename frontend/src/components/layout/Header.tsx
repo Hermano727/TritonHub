@@ -66,23 +66,20 @@ export function Header({ user }: HeaderProps) {
 
   return (
     <>
-      <header className="glass-panel sticky top-0 z-30 flex h-14 shrink-0 items-center gap-4 border-b border-white/[0.07] pl-[72px] pr-4">
+      <header className="glass-panel sticky top-0 z-30 flex h-14 shrink-0 items-center border-b border-white/[0.07] pl-[72px] pr-4">
         {/* Brand — offset to clear sidebar rail */}
         <a
           href="/"
           className="flex min-w-0 items-center gap-2.5 rounded-md outline-none ring-hub-cyan/40 focus-visible:ring-2"
         >
-          <div className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-md border border-white/[0.1] bg-hub-surface shadow-[inset_0_1px_0_rgba(255,255,255,0.07)]">
-            <TritonMark size={22} />
-          </div>
-          <p className="font-[family-name:var(--font-outfit)] text-sm font-bold tracking-tight text-white/90">
-            Reg2Schedg
-          </p>
+          <TritonMark size={42} />
         </a>
 
-        {/* Cmd+K search trigger */}
-        <div className="mx-auto w-full max-w-sm">
-          <CommandPaletteTrigger onClick={() => setPaletteOpen(true)} />
+        {/* Cmd+K search trigger — absolutely centered in the full header */}
+        <div className="pointer-events-none absolute inset-x-0 flex justify-center">
+          <div className="pointer-events-auto w-full max-w-sm px-4">
+            <CommandPaletteTrigger onClick={() => setPaletteOpen(true)} />
+          </div>
         </div>
 
         {/* Right actions */}

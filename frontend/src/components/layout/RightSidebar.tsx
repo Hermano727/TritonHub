@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 import Link from "next/link";
 import {
   BookmarkCheck,
@@ -86,37 +86,36 @@ export function RightSidebar({
   const [shownPanel, setShownPanel] = useState<ActivePanel>("plans");
   const railRef = useRef<HTMLElement>(null);
   const flyoutRef = useRef<HTMLDivElement>(null);
+  const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  function togglePanel(panel: ActivePanel) {
-    if (activePanel === panel) {
-      setActivePanel(null);
-    } else {
-      setShownPanel(panel);
-      setActivePanel(panel);
+  const cancelClose = useCallback(() => {
+    if (closeTimerRef.current) {
+      clearTimeout(closeTimerRef.current);
+      closeTimerRef.current = null;
     }
+  }, []);
+
+  const scheduleClose = useCallback(() => {
+    cancelClose();
+    closeTimerRef.current = setTimeout(() => setActivePanel(null), 20);
+  }, [cancelClose]);
+
+  function openPanel(panel: ActivePanel) {
+    cancelClose();
+    setShownPanel(panel);
+    setActivePanel(panel);
   }
 
-  // Close flyout on click-outside
-  useEffect(() => {
-    if (!activePanel) return;
-    function handleMouseDown(e: MouseEvent) {
-      const target = e.target as Node;
-      if (
-        !railRef.current?.contains(target) &&
-        !flyoutRef.current?.contains(target)
-      ) {
-        setActivePanel(null);
-      }
-    }
-    document.addEventListener("mousedown", handleMouseDown);
-    return () => document.removeEventListener("mousedown", handleMouseDown);
-  }, [activePanel]);
+  // Clean up timer on unmount
+  useEffect(() => () => { if (closeTimerRef.current) clearTimeout(closeTimerRef.current); }, []);
 
   return (
     <>
       {/* Flyout panel — slides in from the left, starts from top */}
       <div
         ref={flyoutRef}
+        onMouseEnter={cancelClose}
+        onMouseLeave={scheduleClose}
         className={`fixed bottom-0 left-14 top-0 z-40 flex w-[280px] flex-col border-r border-white/[0.07] bg-[#0c1a2e]/95 shadow-2xl backdrop-blur-xl transition-transform duration-200 ease-out ${
           activePanel !== null ? "translate-x-0" : "-translate-x-full"
         }`}
@@ -261,6 +260,8 @@ export function RightSidebar({
       {/* Icon rail — fixed full-height dock, covers sidebar column top-to-bottom */}
       <aside
         ref={railRef}
+        onMouseEnter={() => openPanel(shownPanel)}
+        onMouseLeave={scheduleClose}
         className="fixed top-0 left-0 z-50 flex h-dvh w-14 shrink-0 flex-col items-center gap-1 border-r border-white/[0.07] bg-[#091727]/90 backdrop-blur-xl py-3"
       >
         {/* Brand mark fills the header-height slot at the top of the rail */}
@@ -276,13 +277,13 @@ export function RightSidebar({
           icon={BookmarkCheck}
           label="Saved plans"
           active={activePanel === "plans"}
-          onClick={() => togglePanel("plans")}
+          onClick={() => openPanel("plans")}
         />
         <IconButton
           icon={FolderOpen}
           label="Saved files"
           active={activePanel === "vault"}
-          onClick={() => togglePanel("vault")}
+          onClick={() => openPanel("vault")}
         />
         <div className="flex-1" />
         <Link
