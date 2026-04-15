@@ -17,6 +17,7 @@ function fmt12(hhmm: string): string {
 type CampusPathLeafletMapProps = {
   plottedItems: PlottedItem[];
   highlightedDossierId?: string | null;
+  mapHeight?: string;
 };
 
 type TileLayerOptions = {
@@ -163,6 +164,7 @@ function FitToData({ points }: { points: Array<{ lat: number; lng: number }> }) 
 export function CampusPathLeafletMap({
   plottedItems,
   highlightedDossierId,
+  mapHeight = "h-[280px]",
 }: CampusPathLeafletMapProps) {
   // Group items sharing the same lat/lng into one map pin
   const locationGroups = useMemo<LocationGroup[]>(() => {
@@ -183,7 +185,7 @@ export function CampusPathLeafletMap({
   );
 
   return (
-    <div className="relative h-[280px] overflow-hidden rounded-xl border border-white/[0.08] bg-[#071124]">
+    <div className={`relative ${mapHeight} overflow-hidden rounded-xl border border-white/[0.08] bg-[#071124]`}>
       <MapContainer
         center={DEFAULT_CENTER}
         zoom={15}

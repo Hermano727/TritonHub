@@ -12,7 +12,7 @@ import {
   type ReactNode,
 } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { CalendarDays, LayoutGrid, Maximize2, X } from "lucide-react";
+import { CalendarDays, LayoutGrid, Maximize2, Map as MapIcon, BarChart2, Layers, Minimize2, X } from "lucide-react";
 import { isExamSection } from "@/lib/mappers/dossiersToScheduleItems";
 import { ClassCard } from "@/components/dashboard/ClassCard";
 import { DossierDashboardModal } from "@/components/dashboard/DossierDashboardModal";
@@ -61,6 +61,14 @@ function minutesFromTimeInput(iso: string): number | null {
 }
 
 type MainTab = "dossier" | "schedule";
+type WorkspacePhase = "overview" | "dossiers" | "logistics" | "review";
+
+const PHASES: { id: WorkspacePhase; label: string; icon: typeof BarChart2; description: string }[] = [
+  { id: "overview", label: "Overview", icon: BarChart2, description: "Difficulty analysis" },
+  { id: "dossiers", label: "Courses", icon: LayoutGrid, description: "Deep dive" },
+  { id: "logistics", label: "Logistics", icon: MapIcon, description: "Map & schedule" },
+  { id: "review", label: "Review", icon: Layers, description: "Full dashboard" },
+];
 
 export type DossierScheduleWorkspaceHandle = {
   getCurrentClasses: () => ClassDossier[];
@@ -104,7 +112,9 @@ export const DossierScheduleWorkspace = forwardRef(function DossierScheduleWorks
   }), [classes, commitments]);
 
   const [mainTab, setMainTab] = useState<MainTab>("dossier");
+  const [currentPhase, setCurrentPhase] = useState<WorkspacePhase>("overview");
   const [fullscreenOpen, setFullscreenOpen] = useState(false);
+  const [mapFullscreen, setMapFullscreen] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
   const [hoveredClassId, setHoveredClassId] = useState<string | null>(null);
   const [selectedClassId, setSelectedClassId] = useState<string | null>(null);
@@ -351,65 +361,237 @@ export const DossierScheduleWorkspace = forwardRef(function DossierScheduleWorks
         </div>
       </div>
 
-      {/* Desktop: high-density layout */}
-      <div className="hidden lg:block space-y-5">
-        <div className="grid grid-cols-[3fr_2fr] gap-5 items-start">
-          <DifficultyScoreHud evaluation={evaluation} />
-          <ExamsPanel classes={classes} />
-        </div>
+      {/* Desktop: 4-phase guided workspace */}
+      <div className="hidden lg:block space-y-8 workspace-grid rounded-xl p-1">
 
-        <div className="grid grid-cols-2 gap-8 items-start">
-          {/* Left: ClassCard list */}
-          <motion.div
-            className="space-y-3 pr-1"
-            initial="hidden"
-            animate="visible"
-            variants={{ visible: { transition: { staggerChildren: 0.07, delayChildren: 0.1 } } }}
-          >
-            {classes.map((c, idx) => (
-              <ClassCard
-                key={c.id} dossier={c}
-                isSelected={selectedClassId === c.id}
-                markerIndex={dossierMarkerMap.get(c.id)}
-                onSelect={() => setSelectedClassId((prev) => prev === c.id ? null : c.id)}
-                onHover={() => setHoveredClassId(c.id)}
-                onHoverEnd={() => setHoveredClassId(null)}
-                onOpenDashboard={() => setDashboardOpenIndex(idx)}
-              />
-            ))}
-          </motion.div>
-
-          {/* Right: sticky map + calendar */}
-          <div className="sticky top-4 space-y-4 overflow-y-auto hub-scroll" style={{ maxHeight: "calc(100vh - 6rem)" }}>
-            {scheduleItems.length > 0 && (
-              <motion.div
-                initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.4, delay: 0.1, ease: [0.22, 1, 0.36, 1] }}
+        {/* Phase navigation — flat tab row, no surrounding border box */}
+        <nav className="flex items-center gap-1 border-b border-white/[0.06] pb-1" aria-label="Workspace phases">
+          {PHASES.map((phase) => {
+            const Icon = phase.icon;
+            const isActive = currentPhase === phase.id;
+            return (
+              <button
+                key={phase.id}
+                type="button"
+                onClick={() => setCurrentPhase(phase.id)}
+                className={`relative flex items-center gap-2.5 rounded-lg px-4 py-2.5 text-sm transition-all duration-200 active:scale-[0.98] ${
+                  isActive
+                    ? "font-semibold text-white/90"
+                    : "font-medium text-white/40 hover:text-white/70"
+                }`}
               >
+                <Icon className={`h-4 w-4 shrink-0 ${isActive ? "text-hub-cyan" : ""}`} aria-hidden />
+                {phase.label}
+                {/* Active underline indicator */}
+                {isActive && (
+                  <motion.span
+                    layoutId="phase-underline"
+                    className="absolute inset-x-2 -bottom-1 h-px rounded-full bg-hub-cyan"
+                    transition={{ type: "spring", stiffness: 400, damping: 35 }}
+                  />
+                )}
+              </button>
+            );
+          })}
+        </nav>
+
+        {/* Phase 1: Overview — 60/40 hero layout */}
+        {currentPhase === "overview" && (
+          <motion.div
+            key="phase-overview"
+            initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
+            className="grid grid-cols-[3fr_2fr] gap-12 items-start"
+          >
+            <DifficultyScoreHud evaluation={evaluation} isHero />
+            <ExamsPanel classes={classes} />
+          </motion.div>
+        )}
+
+        {/* Phase 2: Dossiers — hero-sized cards */}
+        {currentPhase === "dossiers" && (
+          <motion.div
+            key="phase-dossiers"
+            initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
+          >
+            <motion.div
+              className={`grid gap-8 ${
+                classes.length <= 2 ? "grid-cols-2" :
+                classes.length === 3 ? "grid-cols-3" :
+                "grid-cols-2 xl:grid-cols-3"
+              }`}
+              initial="hidden"
+              animate="visible"
+              variants={{ visible: { transition: { staggerChildren: 0.08, delayChildren: 0.05 } } }}
+            >
+              {classes.map((c, idx) => (
+                <ClassCard
+                  key={c.id} dossier={c}
+                  isSelected={selectedClassId === c.id}
+                  markerIndex={dossierMarkerMap.get(c.id)}
+                  onSelect={() => setSelectedClassId((prev) => prev === c.id ? null : c.id)}
+                  onHover={() => setHoveredClassId(c.id)}
+                  onHoverEnd={() => setHoveredClassId(null)}
+                  onOpenDashboard={() => setDashboardOpenIndex(idx)}
+                />
+              ))}
+            </motion.div>
+          </motion.div>
+        )}
+
+        {/* Phase 3: Logistics — 60/40 dual-instrument split */}
+        {currentPhase === "logistics" && (
+          <motion.div
+            key="phase-logistics"
+            initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
+            className="flex h-[85vh] overflow-hidden rounded-xl border border-white/[0.06]"
+          >
+            {/* Left pane: Map — 60% */}
+            <div className="relative flex-[3] min-w-0 overflow-hidden">
+              {scheduleItems.length > 0 ? (
                 <CampusPathMap
                   scheduleItems={scheduleItems} transitionInsights={transitionInsights}
                   highlightedDossierId={selectedClassId} dossierMarkerMap={dossierMarkerMap}
+                  mapHeight="h-[85vh]"
                 />
-              </motion.div>
-            )}
-            <div className="rounded-xl border border-white/[0.08] bg-hub-surface/90 p-3 shadow-2xl">
-              {toolbar}
-              <div ref={calendarRef} className="mt-3">
-                <WeeklyCalendar
-                  classes={classes} commitments={commitments} onApply={apply}
-                  pxPerHour={62} hideScheduleHeading={false}
-                  headerActions={calendarHeaderActions ? <>{defaultCalendarActions}{calendarHeaderActions}</> : defaultCalendarActions}
-                  onBlockDoubleClick={openEditModal}
-                  highlightedDossierId={selectedClassId}
-                />
-              </div>
-              <div className="mt-3">
-                <CommitmentsPanel commitments={commitments} onRemove={removeCommitment} />
+              ) : (
+                <div className="flex h-full items-center justify-center text-sm text-white/40">
+                  No on-campus courses to map
+                </div>
+              )}
+              <button
+                type="button"
+                onClick={() => setMapFullscreen(true)}
+                className="absolute right-4 top-4 z-10 flex items-center gap-2 rounded-md border border-white/[0.12] bg-hub-bg/80 px-3 py-1.5 text-xs font-medium text-white/70 backdrop-blur-sm transition hover:border-white/[0.2] hover:text-white/90 active:scale-[0.98]"
+              >
+                <Maximize2 className="h-3.5 w-3.5" aria-hidden />
+                Full screen
+              </button>
+            </div>
+
+            {/* Divider */}
+            <div className="w-px shrink-0 bg-white/[0.05]" />
+
+            {/* Right pane: Calendar — 40%, docked */}
+            <div
+              ref={calendarRef}
+              className="flex-[2] min-w-0 overflow-y-auto hub-scroll bg-hub-surface/95"
+            >
+              <div className="p-5">
+                <p className="mb-4 text-[10px] font-semibold uppercase tracking-widest text-white/40">
+                  Weekly schedule
+                </p>
+                {toolbar}
+                <div className="mt-4">
+                  <WeeklyCalendar
+                    classes={classes} commitments={commitments} onApply={apply}
+                    pxPerHour={52} hideScheduleHeading
+                    onBlockDoubleClick={openEditModal}
+                    onBlockClick={(id) => setSelectedClassId((prev) => prev === id ? null : id)}
+                    highlightedDossierId={selectedClassId}
+                  />
+                </div>
+                <div className="mt-4">
+                  <CommitmentsPanel commitments={commitments} onRemove={removeCommitment} />
+                </div>
               </div>
             </div>
-          </div>
-        </div>
+          </motion.div>
+        )}
+
+        {/* Phase 4: Review — Bento command center */}
+        {currentPhase === "review" && (
+          <motion.div
+            key="phase-review"
+            initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
+            className="grid grid-cols-3 gap-8 items-start"
+          >
+            {/* Left 2/3: HUD + Cards */}
+            <div className="col-span-2 space-y-8">
+              <DifficultyScoreHud evaluation={evaluation} />
+              <motion.div
+                className={`grid gap-6 ${classes.length <= 2 ? "grid-cols-2" : "grid-cols-2 xl:grid-cols-3"}`}
+                initial="hidden" animate="visible"
+                variants={{ visible: { transition: { staggerChildren: 0.07, delayChildren: 0.1 } } }}
+              >
+                {classes.map((c, idx) => (
+                  <ClassCard
+                    key={c.id} dossier={c}
+                    isSelected={selectedClassId === c.id}
+                    markerIndex={dossierMarkerMap.get(c.id)}
+                    onSelect={() => setSelectedClassId((prev) => prev === c.id ? null : c.id)}
+                    onHover={() => setHoveredClassId(c.id)}
+                    onHoverEnd={() => setHoveredClassId(null)}
+                    onOpenDashboard={() => setDashboardOpenIndex(idx)}
+                  />
+                ))}
+              </motion.div>
+            </div>
+
+            {/* Right 1/3: Map + Calendar + Exams — sticky command panel */}
+            <div className="sticky top-4 space-y-6 overflow-y-auto hub-scroll" style={{ maxHeight: "calc(100vh - 5rem)" }}>
+              {scheduleItems.length > 0 && (
+                <motion.div
+                  initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.4, delay: 0.1, ease: [0.22, 1, 0.36, 1] }}
+                >
+                  <CampusPathMap
+                    scheduleItems={scheduleItems} transitionInsights={transitionInsights}
+                    highlightedDossierId={selectedClassId} dossierMarkerMap={dossierMarkerMap}
+                    mapHeight="h-[40vh]"
+                  />
+                </motion.div>
+              )}
+              <div ref={calendarRef} className="rounded-xl border border-white/[0.08] p-4">
+                {toolbar}
+                <div className="mt-4">
+                  <WeeklyCalendar
+                    classes={classes} commitments={commitments} onApply={apply}
+                    pxPerHour={52} hideScheduleHeading={false}
+                    headerActions={calendarHeaderActions ? <>{defaultCalendarActions}{calendarHeaderActions}</> : defaultCalendarActions}
+                    onBlockDoubleClick={openEditModal}
+                    highlightedDossierId={selectedClassId}
+                  />
+                </div>
+                <div className="mt-4">
+                  <CommitmentsPanel commitments={commitments} onRemove={removeCommitment} />
+                </div>
+              </div>
+              <ExamsPanel classes={classes} />
+            </div>
+          </motion.div>
+        )}
       </div>
+
+      {/* Map fullscreen overlay — Phase 3 */}
+      <AnimatePresence>
+        {mapFullscreen && (
+          <motion.div
+            key="map-fs"
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            transition={{ duration: 0.2 }}
+            className="fixed inset-0 z-[60] bg-hub-bg"
+            role="dialog" aria-modal="true" aria-label="Full screen campus map"
+          >
+            <CampusPathMap
+              scheduleItems={scheduleItems} transitionInsights={transitionInsights}
+              highlightedDossierId={selectedClassId} dossierMarkerMap={dossierMarkerMap}
+              mapHeight="h-screen"
+            />
+            <button
+              type="button"
+              onClick={() => setMapFullscreen(false)}
+              className="absolute right-5 top-5 z-[61] flex items-center gap-2 rounded-md border border-white/[0.14] bg-hub-bg/80 px-3 py-2 text-xs font-medium text-white/80 backdrop-blur-sm transition hover:border-white/[0.25] hover:text-white active:scale-[0.98]"
+            >
+              <Minimize2 className="h-3.5 w-3.5" aria-hidden />
+              Exit full screen
+            </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* Fullscreen calendar overlay */}
       <AnimatePresence>
@@ -452,9 +634,9 @@ export const DossierScheduleWorkspace = forwardRef(function DossierScheduleWorks
         )}
       </AnimatePresence>
 
-      {/* View Calendar FAB */}
+      {/* View Calendar FAB — only in overview/dossiers phases */}
       <AnimatePresence>
-        {!calendarVisible && !fullscreenOpen && (
+        {!calendarVisible && !fullscreenOpen && currentPhase !== "logistics" && currentPhase !== "review" && (
           <motion.button
             key="view-cal-fab" type="button"
             initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 12 }}

@@ -9,7 +9,7 @@
   --hub-cyan: #00d4ff;
   --hub-gold: #e3b12f;
   --hub-text: #e6f1ff;
-  --hub-text-secondary: rgba(230, 241, 255, 0.72);
+  --hub-text-secondary: rgba(230, 241, 255, 0.88);
   --hub-text-muted: rgba(230, 241, 255, 0.48);
   --hub-danger: #ff6b6b;
   --hub-success: #5eead4;
@@ -91,6 +91,15 @@ p {
     linear-gradient(rgba(255, 255, 255, 0.03) 1px, transparent 1px),
     linear-gradient(90deg, rgba(255, 255, 255, 0.03) 1px, transparent 1px);
   background-size: 100% 100%, 48px 48px, 48px 48px;
+}
+
+/* Large-scale intentional grid for workspace canvas — makes white space feel deliberate */
+.workspace-grid {
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.025) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.025) 1px, transparent 1px);
+  background-size: 72px 72px;
+  background-position: -1px -1px;
 }
 
 .glass-panel {

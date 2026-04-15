@@ -6,10 +6,12 @@ import {
   ChevronRight,
   ExternalLink,
   Info,
+  Pencil,
   RotateCcw,
   Star,
   Zap,
 } from "lucide-react";
+import { useRef, useState } from "react";
 import type { ClassDossier, CourseLogistics, EvidenceItem } from "@/types/dossier";
 import { ConflictBadge } from "@/components/dashboard/ConflictBadge";
 import { getSunsetSummary } from "@/lib/mappers/courseEntryToDossier";
@@ -43,25 +45,25 @@ function confidenceGlow(pct: number): string {
   return "0 0 8px rgba(0,212,255,0.45)";
 }
 
-// ── Categorised attribute chips (Payments / Attendance) ──────────────────────
+// ── Stripe-style dot badge (no heavy pill border) ────────────────────────────
 type AttrChip = { label: string; tone: "amber" | "green" | "muted" };
 
-const ATTR_CHIP_STYLES: Record<AttrChip["tone"], string> = {
-  amber: "border-amber-500/30 bg-amber-900/30 text-amber-400",
-  green: "border-emerald-500/30 bg-emerald-900/20 text-emerald-400",
-  muted: "border-white/[0.08] bg-slate-800/60 text-slate-400",
+const DOT_COLOR: Record<AttrChip["tone"], string> = {
+  amber: "bg-amber-400",
+  green: "bg-emerald-400",
+  muted: "bg-white/20",
 };
 
-function Chip({ chip }: { chip: AttrChip }) {
+const LABEL_COLOR: Record<AttrChip["tone"], string> = {
+  amber: "text-amber-300/90",
+  green: "text-emerald-300/90",
+  muted: "text-white/50",
+};
+
+function DotBadge({ chip }: { chip: AttrChip }) {
   return (
-    <span
-      className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-semibold ${ATTR_CHIP_STYLES[chip.tone]}`}
-    >
-      <span
-        className={`h-1.5 w-1.5 shrink-0 rounded-full ${
-          chip.tone === "amber" ? "bg-amber-400" : chip.tone === "green" ? "bg-emerald-400" : "bg-white/20"
-        }`}
-      />
+    <span className={`inline-flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide ${LABEL_COLOR[chip.tone]}`}>
+      <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${DOT_COLOR[chip.tone]}`} />
       {chip.label}
     </span>
   );
@@ -70,38 +72,28 @@ function Chip({ chip }: { chip: AttrChip }) {
 function AttributeChips({ logistics }: { logistics: CourseLogistics | undefined }) {
   if (!logistics) return null;
 
-  const payments: AttrChip[] = [];
+  const chips: AttrChip[] = [];
+
   if (logistics.textbook_required === true)
-    payments.push({ label: "Textbook Required", tone: "amber" });
+    chips.push({ label: "Textbook required", tone: "amber" });
   else if (logistics.textbook_required === false)
-    payments.push({ label: "No Textbook", tone: "muted" });
+    chips.push({ label: "No textbook", tone: "muted" });
 
-  const attendance: AttrChip[] = [];
   if (logistics.attendance_required === true)
-    attendance.push({ label: "Attendance Mandatory", tone: "amber" });
+    chips.push({ label: "Attendance mandatory", tone: "amber" });
   else if (logistics.attendance_required === false)
-    attendance.push({ label: "Attendance Optional", tone: "muted" });
-  if (logistics.podcasts_available === true)
-    attendance.push({ label: "Podcasts Available", tone: "green" });
-  else if (logistics.podcasts_available === false)
-    attendance.push({ label: "No Podcasts", tone: "muted" });
+    chips.push({ label: "Attendance optional", tone: "muted" });
 
-  if (payments.length === 0 && attendance.length === 0) return null;
+  if (logistics.podcasts_available === true)
+    chips.push({ label: "Podcasts available", tone: "green" });
+  else if (logistics.podcasts_available === false)
+    chips.push({ label: "No podcasts", tone: "muted" });
+
+  if (chips.length === 0) return null;
 
   return (
-    <div className="space-y-1">
-      {payments.length > 0 && (
-        <div className="flex flex-wrap items-center gap-1.5">
-          <span className="w-16 shrink-0 text-[9px] font-medium text-hub-text-muted/60">Payments</span>
-          {payments.map((c) => <Chip key={c.label} chip={c} />)}
-        </div>
-      )}
-      {attendance.length > 0 && (
-        <div className="flex flex-wrap items-center gap-1.5">
-          <span className="w-20 shrink-0 text-[9px] font-medium text-hub-text-muted/60">Attendance</span>
-          {attendance.map((c) => <Chip key={c.label} chip={c} />)}
-        </div>
-      )}
+    <div className="flex flex-wrap gap-x-4 gap-y-1.5">
+      {chips.map((c) => <DotBadge key={c.label} chip={c} />)}
     </div>
   );
 }
@@ -218,12 +210,12 @@ function GradeBreakdownStrip({ breakdown }: { breakdown: string | null | undefin
 
   return (
     <div className="rounded-lg border border-white/[0.06] bg-hub-bg/20 px-3 py-2">
-      <p className="mb-1.5 text-[9px] font-medium text-hub-text-muted/70">
+      <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-white/50">
         Grading
       </p>
       <div className="flex flex-wrap gap-x-3 gap-y-1">
         {segments.map((seg, i) => (
-          <span key={i} className="text-xs text-hub-text-secondary">
+          <span key={i} className="text-sm text-white/80">
             {seg}
           </span>
         ))}
@@ -252,7 +244,7 @@ function InlineQuote({ item }: { item: EvidenceItem }) {
           rel="noopener noreferrer"
           onClick={(e) => e.stopPropagation()}
           title={item.source}
-          className="mt-0.5 shrink-0 text-hub-text-muted/60 transition hover:text-hub-cyan"
+          className="mt-0.5 shrink-0 text-white/40 transition hover:text-hub-cyan"
         >
           <ExternalLink className="h-3 w-3" />
         </a>
@@ -344,6 +336,63 @@ function GradeHistogram({
   );
 }
 
+// ── Inline pencil edit field ──────────────────────────────────────────────────
+function InlinePencilField({
+  value,
+  placeholder,
+  onSave,
+}: {
+  value: string;
+  placeholder: string;
+  onSave: (v: string) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(value);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  const open = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setDraft(value);
+    setEditing(true);
+    setTimeout(() => inputRef.current?.focus(), 0);
+  };
+
+  const commit = () => {
+    onSave(draft.trim() || value);
+    setEditing(false);
+  };
+
+  if (editing) {
+    return (
+      <div className="flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
+        <input
+          ref={inputRef}
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onBlur={commit}
+          onKeyDown={(e) => { if (e.key === "Enter") commit(); if (e.key === "Escape") setEditing(false); }}
+          placeholder={placeholder}
+          className="min-w-0 flex-1 rounded border border-hub-cyan/40 bg-hub-bg/60 px-2 py-0.5 text-sm text-hub-text outline-none ring-0 focus:border-hub-cyan/70"
+        />
+      </div>
+    );
+  }
+
+  return (
+    <div className="group/field flex items-center gap-1">
+      <span className={value ? "" : "italic text-hub-text-muted"}>{value || placeholder}</span>
+      <button
+        type="button"
+        onClick={open}
+        title="Edit manually"
+        className="opacity-0 transition group-hover/field:opacity-100 text-hub-text-muted hover:text-hub-cyan"
+      >
+        <Pencil className="h-2.5 w-2.5" />
+      </button>
+    </div>
+  );
+}
+
 // ── Main ClassCard ────────────────────────────────────────────────────────────
 export function ClassCard({
   dossier,
@@ -354,6 +403,9 @@ export function ClassCard({
   onHoverEnd,
   onOpenDashboard,
 }: ClassCardProps) {
+  // Local overrides for manual data entry
+  const [localTitle, setLocalTitle] = useState(dossier.courseTitle ?? "");
+  const [localProfName, setLocalProfName] = useState(dossier.professorName ?? "");
 
   const rmp = dossier.logistics?.rate_my_professor;
   const sunsetSummary = getSunsetSummary(dossier.sunsetGradeDistribution);
@@ -406,7 +458,7 @@ export function ClassCard({
         onMouseEnter={onHover}
         onMouseLeave={onHoverEnd}
         onClick={onSelect}
-        className={`rounded-xl border bg-hub-surface/90 p-4 shadow-sm transition-colors duration-200 cursor-pointer
+        className={`rounded-xl border bg-hub-surface/90 p-4 shadow-sm transition-colors duration-200 cursor-pointer active:scale-[0.98]
           ${
             isSelected
               ? "border-hub-cyan/60 shadow-[0_0_0_1px_rgba(0,212,255,0.12),0_8px_32px_rgba(0,212,255,0.08)]"
@@ -429,7 +481,11 @@ export function ClassCard({
                   </span>
                 ) : null}
                 <span className="text-hub-text-muted font-normal text-sm">
-                  {dossier.courseTitle}
+                  <InlinePencilField
+                    value={localTitle}
+                    placeholder="Course title"
+                    onSave={setLocalTitle}
+                  />
                 </span>
               </h3>
               <div className="mt-1.5 flex items-center gap-2">
@@ -437,7 +493,11 @@ export function ClassCard({
                   {dossier.professorInitials}
                 </span>
                 <span className="text-sm text-hub-text-secondary">
-                  {dossier.professorName}
+                  <InlinePencilField
+                    value={localProfName}
+                    placeholder="Professor name"
+                    onSave={setLocalProfName}
+                  />
                 </span>
               </div>
             </div>
@@ -456,7 +516,7 @@ export function ClassCard({
                     e.stopPropagation();
                     onOpenDashboard?.();
                   }}
-                  className="flex items-center gap-1 rounded-lg border border-hub-cyan/30 bg-hub-cyan/10 px-3 py-1.5 text-xs font-semibold text-hub-cyan transition hover:bg-hub-cyan/20 hover:border-hub-cyan/50"
+                  className="flex items-center gap-1 rounded-lg border border-hub-cyan/30 bg-hub-cyan/10 px-3 py-1.5 text-xs font-semibold text-hub-cyan transition hover:bg-hub-cyan/20 hover:border-hub-cyan/50 hover:-translate-y-[1px] active:scale-[0.98]"
                 >
                   Course Details
                   <ChevronRight className="h-3 w-3" aria-hidden />
@@ -481,7 +541,7 @@ export function ClassCard({
                       {rmp.rating.toFixed(1)}
                     </span>
                   </div>
-                  <span className="text-[10px] text-hub-text-muted/70">Rating</span>
+                  <span className="text-[10px] text-white/50">Rating</span>
                 </div>
               )}
               {hasRmp && rmp.difficulty != null && (
@@ -494,7 +554,7 @@ export function ClassCard({
                         {rmp.difficulty.toFixed(1)}
                       </span>
                     </div>
-                    <span className="text-[10px] text-hub-text-muted/70">Difficulty</span>
+                    <span className="text-[10px] text-white/50">Difficulty</span>
                   </div>
                 </>
               )}
@@ -508,7 +568,7 @@ export function ClassCard({
                         {Math.round(rmp.would_take_again_percent)}%
                       </span>
                     </div>
-                    <span className="text-[10px] text-hub-text-muted/70">Retake</span>
+                    <span className="text-[10px] text-white/50">Retake</span>
                   </div>
                 </>
               )}
@@ -519,7 +579,7 @@ export function ClassCard({
                     <span className="text-base font-bold text-hub-cyan tabular-nums">
                       {sunsetSummary.average_gpa}
                     </span>
-                    <span className="text-[10px] text-hub-text-muted/70">
+                    <span className="text-[10px] text-white/50">
                       {dossier.sunsetGradeDistribution?.is_cross_course_fallback ? "Other GPA*" : "Avg GPA"}
                     </span>
                   </div>

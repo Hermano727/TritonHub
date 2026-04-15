@@ -130,6 +130,8 @@ export interface WeeklyCalendarProps {
   hideScheduleHeading?: boolean;
   /** Called when a block is double-clicked — use to open an edit modal. */
   onBlockDoubleClick?: (block: CourseBlock | CommitmentBlock) => void;
+  /** Called on single click of a course block — use to sync map highlight. */
+  onBlockClick?: (dossierId: string) => void;
   /** When set, course blocks matching this dossier ID will glow cyan. */
   highlightedDossierId?: string | null;
 }
@@ -143,6 +145,7 @@ export function WeeklyCalendar({
   headerActions,
   hideScheduleHeading = false,
   onBlockDoubleClick,
+  onBlockClick,
   highlightedDossierId,
 }: WeeklyCalendarProps) {
   const pxPerMin = pxPerHour / 60;
@@ -163,6 +166,7 @@ export function WeeklyCalendar({
       lastClickRef.current = null;
     } else {
       lastClickRef.current = { key, time: now };
+      if (b.kind === "course") onBlockClick?.(b.dossierId);
     }
   }
 

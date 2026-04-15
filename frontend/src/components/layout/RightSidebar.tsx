@@ -6,6 +6,7 @@ import {
   BookmarkCheck,
   FileText,
   FolderOpen,
+  Home,
   Plus,
   Settings,
   Trash,
@@ -113,10 +114,10 @@ export function RightSidebar({
 
   return (
     <>
-      {/* Flyout panel — fixed overlay, slides in from the left */}
+      {/* Flyout panel — slides in from the left, starts from top */}
       <div
         ref={flyoutRef}
-        className={`fixed bottom-0 left-14 top-14 z-40 flex w-[280px] flex-col border-r border-white/[0.08] bg-hub-surface shadow-2xl transition-transform duration-200 ease-out ${
+        className={`fixed bottom-0 left-14 top-0 z-40 flex w-[280px] flex-col border-r border-white/[0.07] bg-[#0c1a2e]/95 shadow-2xl backdrop-blur-xl transition-transform duration-200 ease-out ${
           activePanel !== null ? "translate-x-0" : "-translate-x-full"
         }`}
         aria-hidden={activePanel === null}
@@ -254,11 +255,23 @@ export function RightSidebar({
         )}
       </div>
 
-      {/* Icon rail — 56px wide, left edge of layout */}
+      {/* Layout placeholder — maintains 56px flex space while rail is fixed */}
+      <div className="w-14 shrink-0" aria-hidden />
+
+      {/* Icon rail — fixed full-height dock, covers sidebar column top-to-bottom */}
       <aside
         ref={railRef}
-        className="glass-panel relative z-50 flex w-14 shrink-0 flex-col items-center gap-1 border-r border-white/[0.08] py-3"
+        className="fixed top-0 left-0 z-50 flex h-dvh w-14 shrink-0 flex-col items-center gap-1 border-r border-white/[0.07] bg-[#091727]/90 backdrop-blur-xl py-3"
       >
+        {/* Brand mark fills the header-height slot at the top of the rail */}
+        <a
+          href="/"
+          className="mb-2 flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-white/[0.08] bg-hub-surface/80 text-hub-cyan transition hover:border-hub-cyan/30"
+          aria-label="Home"
+        >
+          <Home className="h-4 w-4" aria-hidden />
+        </a>
+        <div className="my-1 h-px w-6 bg-white/[0.06]" />
         <IconButton
           icon={BookmarkCheck}
           label="Saved plans"
