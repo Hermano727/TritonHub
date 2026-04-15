@@ -21,6 +21,9 @@ Usage:
     # Enrich entries that came from tiered_pipeline but have thin evidence
     python -m app.scripts.browser_use_enrich --prefix CSE,MATH,COGS --threshold 3
 
+    # Use a more capable model (costs more per run)
+    python -m app.scripts.browser_use_enrich --prefix CSE --threshold 2 --model bu-max
+
 Cost estimate:
     Browser Use Cloud costs ~$0.05-0.20 per run depending on depth.
     With --threshold 2, expect ~30-50% of cached entries to qualify.
@@ -261,8 +264,8 @@ def main() -> None:
                         help="Max entries to process (0 = no limit)")
     parser.add_argument("--delay", type=float, default=5.0,
                         help="Seconds between Browser Use calls (default: 5.0)")
-    parser.add_argument("--model", default="claude-3-5-sonnet",
-                        help="Browser Use model to use (default: claude-3-5-sonnet)")
+    parser.add_argument("--model", default="bu-mini",
+                        help="Browser Use model to use: bu-mini, bu-max, bu-ultra (default: bu-mini)")
     parser.add_argument("--dry-run", action="store_true",
                         help="List candidates without running Browser Use")
     parser.add_argument("--yes", "-y", action="store_true",

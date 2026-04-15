@@ -15,7 +15,7 @@ from supabase import Client
 
 from app.models.domain import CourseResearchCacheRow
 from app.models.plan import SavedPlanCreate
-from app.utils.normalize import normalize_course_code, normalize_professor_name
+from app.utils.normalize import normalize_course_code, normalize_professor_name, normalize_professor_name_loose
 
 
 # ---------------------------------------------------------------------------
@@ -112,17 +112,39 @@ def get_course_research_cache(
     course_code: str,
     professor_name: str | None,
 ) -> CourseResearchCacheRow | None:
+    norm_code = normalize_course_code(course_code)
+    norm_prof = normalize_professor_name(professor_name)
+
+    # Exact lookup first
     response = (
         client.table("course_research_cache")
         .select("*")
-        .eq("normalized_course_code", normalize_course_code(course_code))
-        .eq("normalized_professor_name", normalize_professor_name(professor_name))
+        .eq("normalized_course_code", norm_code)
+        .eq("normalized_professor_name", norm_prof)
         .limit(1)
         .execute()
     )
-    if not response.data:
+    if response.data:
+        return CourseResearchCacheRow.model_validate(response.data[0])
+
+    # Fallback: try with middle initials stripped.
+    # Bridges "CHIN, BRYAN" (from WebReg/Gemini) → "CHIN, BRYAN W." (stored from sunset).
+    loose_prof = normalize_professor_name_loose(professor_name)
+    if loose_prof == norm_prof:
+        # No difference after stripping — no point in a second DB hit
         return None
-    return CourseResearchCacheRow.model_validate(response.data[0])
+
+    response = (
+        client.table("course_research_cache")
+        .select("*")
+        .eq("normalized_course_code", norm_code)
+        .like("normalized_professor_name", f"{loose_prof}%")
+        .limit(1)
+        .execute()
+    )
+    if response.data:
+        return CourseResearchCacheRow.model_validate(response.data[0])
+    return None
 
 
 def get_course_research_cache_by_id(
