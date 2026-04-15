@@ -8,8 +8,16 @@ Normalization is always performed through app.utils.normalize — never inline �
 so that cache keys are identical everywhere.
 """
 
-from datetime import datetime, timezone
+import logging
+from datetime import datetime, timezone, timedelta
 from typing import Any
+
+_log = logging.getLogger(__name__)
+
+# How long a known_schedules snapshot is trusted before we fall through to
+# per-course cache lookups. Keep this at or below STALE_AFTER_DAYS in
+# course_research.py so the underlying cache entries always outlive the snapshot.
+KNOWN_SCHEDULE_TTL_DAYS = 14
 
 from supabase import Client
 
@@ -106,6 +114,31 @@ def get_saved_plan(client: Client, plan_id: str) -> dict[str, Any] | None:
 # Course research cache
 # ---------------------------------------------------------------------------
 
+def _swap_name_order(norm_prof: str) -> str | None:
+    """
+    If norm_prof is in 'LAST, FIRST' format, return 'FIRST LAST' (no comma).
+    If it's already 'FIRST LAST' (no comma), return 'LAST, FIRST' equivalent attempt.
+    Returns None if no useful swap can be produced.
+
+    This handles the mismatch between WebReg-style 'Krishnan, Viswanathan'
+    (normalises to 'KRISHNAN, VISWANATHAN') and scraped/stored 'Viswanathan Krishnan'
+    (normalises to 'VISWANATHAN KRISHNAN').
+    """
+    if "," in norm_prof:
+        # "KRISHNAN, VISWANATHAN" → "VISWANATHAN KRISHNAN"
+        last, rest = norm_prof.split(",", 1)
+        rest = rest.strip()
+        last = last.strip()
+        if rest:
+            return f"{rest} {last}"
+    else:
+        # "VISWANATHAN KRISHNAN" — try "KRISHNAN, VISWANATHAN" swap
+        parts = norm_prof.split()
+        if len(parts) >= 2:
+            return f"{parts[-1]}, {' '.join(parts[:-1])}"
+    return None
+
+
 def get_course_research_cache(
     client: Client,
     *,
@@ -115,7 +148,7 @@ def get_course_research_cache(
     norm_code = normalize_course_code(course_code)
     norm_prof = normalize_professor_name(professor_name)
 
-    # Exact lookup first
+    # 1. Exact lookup
     response = (
         client.table("course_research_cache")
         .select("*")
@@ -127,23 +160,37 @@ def get_course_research_cache(
     if response.data:
         return CourseResearchCacheRow.model_validate(response.data[0])
 
-    # Fallback: try with middle initials stripped.
-    # Bridges "CHIN, BRYAN" (from WebReg/Gemini) → "CHIN, BRYAN W." (stored from sunset).
+    # 2. Middle-initial strip fallback.
+    # Bridges "CHIN, BRYAN" (WebReg/Gemini) → "CHIN, BRYAN W." (stored from sunset).
     loose_prof = normalize_professor_name_loose(professor_name)
-    if loose_prof == norm_prof:
-        # No difference after stripping — no point in a second DB hit
-        return None
+    if loose_prof != norm_prof:
+        response = (
+            client.table("course_research_cache")
+            .select("*")
+            .eq("normalized_course_code", norm_code)
+            .like("normalized_professor_name", f"{loose_prof}%")
+            .limit(1)
+            .execute()
+        )
+        if response.data:
+            return CourseResearchCacheRow.model_validate(response.data[0])
 
-    response = (
-        client.table("course_research_cache")
-        .select("*")
-        .eq("normalized_course_code", norm_code)
-        .like("normalized_professor_name", f"{loose_prof}%")
-        .limit(1)
-        .execute()
-    )
-    if response.data:
-        return CourseResearchCacheRow.model_validate(response.data[0])
+    # 3. Name-order swap fallback.
+    # Bridges "KRISHNAN, VISWANATHAN" (WebReg Last,First) ↔ "VISWANATHAN KRISHNAN"
+    # (First Last — sometimes stored from earlier research runs or Browser Use).
+    swapped = _swap_name_order(norm_prof)
+    if swapped and swapped != norm_prof:
+        response = (
+            client.table("course_research_cache")
+            .select("*")
+            .eq("normalized_course_code", norm_code)
+            .eq("normalized_professor_name", swapped)
+            .limit(1)
+            .execute()
+        )
+        if response.data:
+            return CourseResearchCacheRow.model_validate(response.data[0])
+
     return None
 
 
@@ -212,6 +259,7 @@ def get_known_schedule(
     Return the assembled_payload for a known schedule signature, or None.
 
     The assembled_payload is a serialized BatchResearchResponse (dict).
+    Returns None if the entry is older than KNOWN_SCHEDULE_TTL_DAYS.
     """
     resp = (
         client.table("known_schedules")
@@ -222,7 +270,23 @@ def get_known_schedule(
     )
     if not resp.data:
         return None
-    return resp.data[0]
+
+    row = resp.data[0]
+    updated_at_str = row.get("updated_at")
+    if updated_at_str:
+        try:
+            updated_dt = datetime.fromisoformat(updated_at_str.replace("Z", "+00:00"))
+            age = datetime.now(timezone.utc) - updated_dt
+            if age > timedelta(days=KNOWN_SCHEDULE_TTL_DAYS):
+                _log.info(
+                    "known_schedules entry expired (%d days old, TTL=%d) for signature %s",
+                    age.days, KNOWN_SCHEDULE_TTL_DAYS, signature[:16],
+                )
+                return None
+        except Exception:
+            pass
+
+    return row
 
 
 def upsert_known_schedule(

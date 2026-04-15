@@ -380,8 +380,32 @@ async def research_courses(
         try:
             known = get_known_schedule(cache_client, signature)
             if known is not None:
-                _log.info("[fast-path] known_schedules hit for signature %s", signature[:16])
-                return BatchResearchResponse.model_validate(known["assembled_payload"])
+                try:
+                    cached_response = BatchResearchResponse.model_validate(known["assembled_payload"])
+                    # Validate every result has a cache_id and no error.
+                    # A missing cache_id means the course wasn't cached when the snapshot was
+                    # taken (e.g. a failed or empty research run). An error field means the
+                    # previous run failed. In either case fall through so we re-research with
+                    # whatever is now in course_research_cache.
+                    all_valid = all(
+                        r.cache_id is not None and not r.error
+                        for r in cached_response.results
+                    )
+                    if all_valid:
+                        _log.info("[fast-path] known_schedules hit for signature %s", signature[:16])
+                        return cached_response
+                    else:
+                        stale = [
+                            r.course_code for r in cached_response.results
+                            if r.cache_id is None or r.error
+                        ]
+                        _log.info(
+                            "[fast-path] known_schedules snapshot stale for signature %s "
+                            "— missing/errored entries: %s — falling through",
+                            signature[:16], stale,
+                        )
+                except Exception as exc:
+                    _log.warning("[fast-path] known_schedules validation failed: %s", exc)
         except Exception as exc:
             _log.warning("[fast-path] known_schedules lookup failed: %s", exc)
     else:
