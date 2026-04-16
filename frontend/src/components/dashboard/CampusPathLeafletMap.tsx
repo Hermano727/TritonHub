@@ -18,6 +18,8 @@ type CampusPathLeafletMapProps = {
   plottedItems: PlottedItem[];
   highlightedDossierId?: string | null;
   mapHeight?: string;
+  /** Called when the user clicks a map marker. Toggles: same ID a second time → null. */
+  onMarkerClick?: (dossierId: string | null) => void;
 };
 
 type TileLayerOptions = {
@@ -40,31 +42,60 @@ const TILE_OPTIONS: TileLayerOptions = {
   attribution: "&copy; OpenStreetMap contributors",
 };
 
-/** Single-class marker: shows the marker number */
-function makeSingleIcon(num: number, uncertain = false, highlighted = false) {
-  const cls = highlighted
-    ? "rp-seq-icon__inner rp-seq-icon__inner--highlighted"
+const CARET_H = 5;
+const LABEL_H = 24;
+
+/**
+ * Strip section-type suffixes from a title like "CSE 120 Lecture" → "CSE 120".
+ * Most UCSD course codes are 7-9 characters, so this keeps pins compact.
+ */
+function extractCode(title: string): string {
+  return title
+    .replace(/\s+(lecture|discussion|lab|studio|seminar|section|quiz|review|problem\s*session)$/i, "")
+    .trim();
+}
+
+/** Single-class label pin: shows the course code as a text badge with a caret pointer. */
+function makeSingleIcon(title: string, uncertain = false, highlighted = false) {
+  const code = extractCode(title);
+  const text = code.length > 12 ? code.slice(0, 11) + "…" : code;
+  const stateClass = highlighted
+    ? " rp-label-pin--highlighted"
     : uncertain
-    ? "rp-seq-icon__inner rp-seq-icon__inner--uncertain"
-    : "rp-seq-icon__inner";
+    ? " rp-label-pin--uncertain"
+    : "";
+  const width = Math.max(56, Math.min(100, text.length * 7 + 18));
   return L.divIcon({
-    className: "rp-seq-icon",
-    html: `<div class="${cls}">${num}</div>`,
-    iconSize: [28, 28],
-    iconAnchor: [14, 14],
+    className: "rp-icon-outer",
+    html: `<div class="rp-label-pin${stateClass}">${text}</div>`,
+    iconSize: [width, LABEL_H],
+    iconAnchor: [width / 2, LABEL_H + CARET_H],
+    tooltipAnchor: [0, -(LABEL_H + 10)],
   });
 }
 
-/** Multi-class marker: shows count with a stacked badge style */
-function makeMultiIcon(count: number, highlighted = false) {
-  const cls = highlighted
-    ? "rp-seq-icon__inner rp-seq-icon__inner--highlighted rp-seq-icon__inner--multi"
-    : "rp-seq-icon__inner rp-seq-icon__inner--multi";
+/** Multi-class label stack: shows each course code on its own row inside one pin. */
+function makeMultiIcon(items: PlottedItem[], highlighted = false) {
+  const codes = items.map((item) => extractCode(item.title));
+  const maxLen = Math.max(...codes.map((c) => c.length));
+  const width = Math.max(72, Math.min(110, maxLen * 7 + 18));
+  const HEADER_H = 16;
+  const ITEM_H = 18;
+  const contentH = HEADER_H + codes.length * ITEM_H;
+  const hlClass = highlighted ? " rp-multi-label-pin--highlighted" : "";
+  const itemsHtml = codes
+    .map((c) => `<div class="rp-multi-label-pin__item">${c}</div>`)
+    .join("");
+  const html = `<div class="rp-multi-label-pin${hlClass}">
+    <div class="rp-multi-label-pin__header">${codes.length} classes</div>
+    ${itemsHtml}
+  </div>`;
   return L.divIcon({
-    className: "rp-seq-icon",
-    html: `<div class="${cls}"><span class="rp-seq-icon__count">${count}</span></div>`,
-    iconSize: [34, 34],
-    iconAnchor: [17, 17],
+    className: "rp-icon-outer",
+    html,
+    iconSize: [width, contentH],
+    iconAnchor: [width / 2, contentH + CARET_H],
+    tooltipAnchor: [0, -(contentH + 8)],
   });
 }
 
@@ -165,6 +196,7 @@ export function CampusPathLeafletMap({
   plottedItems,
   highlightedDossierId,
   mapHeight = "h-[280px]",
+  onMarkerClick,
 }: CampusPathLeafletMapProps) {
   // Group items sharing the same lat/lng into one map pin
   const locationGroups = useMemo<LocationGroup[]>(() => {
@@ -207,22 +239,29 @@ export function CampusPathLeafletMap({
           );
 
           const icon = isMulti
-            ? makeMultiIcon(group.items.length, isHighlighted)
+            ? makeMultiIcon(group.items, isHighlighted)
             : makeSingleIcon(
-                group.items[0].markerNum || 1,
+                group.items[0].title,
                 isUncertain,
                 isHighlighted,
               );
+
+          // For click toggle: if this group is already the highlighted one, deselect.
+          const groupDossierId = group.items[0].dossierId ?? null;
+          const alreadySelected = groupDossierId != null && groupDossierId === highlightedDossierId;
 
           return (
             <Marker
               key={group.key}
               position={[group.lat, group.lng]}
               icon={icon}
+              eventHandlers={onMarkerClick ? {
+                click: () => onMarkerClick(alreadySelected ? null : groupDossierId),
+              } : undefined}
             >
               <Tooltip
                 direction="top"
-                offset={[0, isMulti ? -24 : -20]}
+                offset={[0, isMulti ? -80 : -42]}
                 opacity={1}
                 className="rp-tooltip rp-tooltip--multi"
               >

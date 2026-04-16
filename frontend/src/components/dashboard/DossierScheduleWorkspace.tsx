@@ -29,7 +29,7 @@ import { WeeklyCalendar, type CourseBlock, type CommitmentBlock, COL_TO_DAY, par
 import { useCalendarSyncHandler } from "@/components/layout/calendar-sync-context";
 import { useCalendarState } from "@/components/layout/calendar-state-context";
 import { useScheduleEditor, useScheduleFingerprint } from "@/hooks/useScheduleEditor";
-import type { ClassDossier, ScheduleCommitment, ScheduleEvaluation, ScheduleItem, TransitionInsight, TransitProfile } from "@/types/dossier";
+import type { ClassDossier, DossierEditPatch, ScheduleCommitment, ScheduleEvaluation, ScheduleItem, TransitionInsight, TransitProfile } from "@/types/dossier";
 
 function isDossierRemoteOnly(dossier: ClassDossier): boolean {
   const regular = dossier.meetings.filter((m) => !isExamSection(m.section_type));
@@ -228,6 +228,22 @@ export const DossierScheduleWorkspace = forwardRef(function DossierScheduleWorks
     getCurrentCommitments: () => commitments,
   }), [classes, commitments]);
 
+  /** Apply a user-supplied correction to a dossier field. Held in editor state until plan is saved. */
+  const onUpdateDossier = useCallback((dossierId: string, patch: DossierEditPatch) => {
+    const updatedClasses = classes.map((c): ClassDossier => {
+      if (c.id !== dossierId) return c;
+      return {
+        ...c,
+        ...(patch.courseTitle != null ? { courseTitle: patch.courseTitle } : {}),
+        ...(patch.professorName != null ? { professorName: patch.professorName } : {}),
+        ...(patch.logistics != null
+          ? { logistics: c.logistics ? { ...c.logistics, ...patch.logistics } : (patch.logistics as ClassDossier["logistics"]) }
+          : {}),
+      };
+    });
+    apply({ classes: updatedClasses, commitments });
+  }, [apply, classes, commitments]);
+
   const [mainTab, setMainTab] = useState<MainTab>("dossier");
   const [currentPhase, setCurrentPhase] = useState<WorkspacePhase>("overview");
   const [fullscreenOpen, setFullscreenOpen] = useState(false);
@@ -268,6 +284,12 @@ export const DossierScheduleWorkspace = forwardRef(function DossierScheduleWorks
   useEffect(() => {
     registerOpenFullscreen(() => setFullscreenOpen(true));
   }, [registerOpenFullscreen]);
+
+  // Clear any stale card-selection when entering the Logistics phase.
+  // On this tab there are no ClassCards visible, so selection can only be driven by map clicks.
+  useEffect(() => {
+    if (currentPhase === "logistics") setSelectedClassId(null);
+  }, [currentPhase]);
 
   useEffect(() => {
     const el = calendarRef.current;
@@ -462,6 +484,7 @@ export const DossierScheduleWorkspace = forwardRef(function DossierScheduleWorks
               onHover={() => setHoveredClassId(c.id)}
               onHoverEnd={() => setHoveredClassId(null)}
               onOpenDashboard={() => setDashboardOpenIndex(idx)}
+              onUpdate={(patch) => onUpdateDossier(c.id, patch)}
             />
           ))}
         </motion.div>
@@ -588,6 +611,7 @@ export const DossierScheduleWorkspace = forwardRef(function DossierScheduleWorks
                   onHover={() => setHoveredClassId(c.id)}
                   onHoverEnd={() => setHoveredClassId(null)}
                   onOpenDashboard={() => setDashboardOpenIndex(idx)}
+              onUpdate={(patch) => onUpdateDossier(c.id, patch)}
                 />
               ))}
             </motion.div>
@@ -620,6 +644,7 @@ export const DossierScheduleWorkspace = forwardRef(function DossierScheduleWorks
                   scheduleItems={scheduleItems} transitionInsights={transitionInsights}
                   highlightedDossierId={selectedClassId} dossierMarkerMap={dossierMarkerMap}
                   mapHeight="h-[85vh]"
+                  onMarkerClick={(id) => setSelectedClassId(id)}
                 />
               ) : (
                 <div className="flex h-full items-center justify-center text-sm text-white/40">
@@ -654,7 +679,6 @@ export const DossierScheduleWorkspace = forwardRef(function DossierScheduleWorks
                     classes={classes} commitments={commitments} onApply={apply}
                     pxPerHour={52} hideScheduleHeading
                     onBlockDoubleClick={openEditModal}
-                    onBlockClick={(id) => setSelectedClassId((prev) => prev === id ? null : id)}
                     highlightedDossierId={selectedClassId}
                   />
                 </div>
@@ -732,6 +756,7 @@ export const DossierScheduleWorkspace = forwardRef(function DossierScheduleWorks
                     onHover={() => setHoveredClassId(c.id)}
                     onHoverEnd={() => setHoveredClassId(null)}
                     onOpenDashboard={() => setDashboardOpenIndex(idx)}
+              onUpdate={(patch) => onUpdateDossier(c.id, patch)}
                   />
                 ))}
               </motion.div>
@@ -888,6 +913,7 @@ export const DossierScheduleWorkspace = forwardRef(function DossierScheduleWorks
         openIndex={dashboardOpenIndex}
         onClose={() => setDashboardOpenIndex(null)}
         onNavigate={setDashboardOpenIndex}
+        onUpdate={onUpdateDossier}
       />
     </>
   );

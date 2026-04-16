@@ -188,6 +188,23 @@ export interface TransitionInsight {
   detail: string;
 }
 
+/**
+ * Subset of ClassDossier fields that users can manually correct.
+ * Applied client-side only; persisted when the user saves their plan.
+ * Designed to be extended when document-upload (syllabus parsing) is added.
+ */
+export interface DossierEditPatch {
+  courseTitle?: string;
+  professorName?: string;
+  /** Partial override of CourseLogistics — only the correctable fields. */
+  logistics?: {
+    grade_breakdown?: string | null;
+    attendance_required?: boolean | null;
+    textbook_required?: boolean | null;
+    podcasts_available?: boolean | null;
+  };
+}
+
 export interface MockDossierPayload {
   activeQuarterId: string;
   quarters: QuarterRef[];

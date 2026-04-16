@@ -6,14 +6,13 @@ import {
   ChevronRight,
   ExternalLink,
   Info,
-  Pencil,
   RotateCcw,
   Star,
   Zap,
 } from "lucide-react";
-import { useRef, useState } from "react";
-import type { ClassDossier, CourseLogistics, EvidenceItem } from "@/types/dossier";
+import type { ClassDossier, CourseLogistics, DossierEditPatch, EvidenceItem } from "@/types/dossier";
 import { ConflictBadge } from "@/components/dashboard/ConflictBadge";
+import { InlinePencilField } from "@/components/dashboard/InlinePencilField";
 import { getSunsetSummary } from "@/lib/mappers/courseEntryToDossier";
 import { isExamSection } from "@/lib/mappers/dossiersToScheduleItems";
 
@@ -30,6 +29,8 @@ type ClassCardProps = {
   onHover?: () => void;
   onHoverEnd?: () => void;
   onOpenDashboard?: () => void;
+  /** Called when user manually corrects a field. Changes are held in the workspace state until plan is saved. */
+  onUpdate?: (patch: DossierEditPatch) => void;
 };
 
 // ── Confidence bar color based on percentage ──────────────────────────────────
@@ -372,63 +373,6 @@ function GradeHistogram({
   );
 }
 
-// ── Inline pencil edit field ──────────────────────────────────────────────────
-function InlinePencilField({
-  value,
-  placeholder,
-  onSave,
-}: {
-  value: string;
-  placeholder: string;
-  onSave: (v: string) => void;
-}) {
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState(value);
-  const inputRef = useRef<HTMLInputElement>(null);
-
-  const open = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    setDraft(value);
-    setEditing(true);
-    setTimeout(() => inputRef.current?.focus(), 0);
-  };
-
-  const commit = () => {
-    onSave(draft.trim() || value);
-    setEditing(false);
-  };
-
-  if (editing) {
-    return (
-      <div className="flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
-        <input
-          ref={inputRef}
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          onBlur={commit}
-          onKeyDown={(e) => { if (e.key === "Enter") commit(); if (e.key === "Escape") setEditing(false); }}
-          placeholder={placeholder}
-          className="min-w-0 flex-1 rounded border border-hub-cyan/40 bg-hub-bg/60 px-2 py-0.5 text-sm text-hub-text outline-none ring-0 focus:border-hub-cyan/70"
-        />
-      </div>
-    );
-  }
-
-  return (
-    <div className="group/field flex items-center gap-1">
-      <span className={value ? "" : "italic text-hub-text-muted"}>{value || placeholder}</span>
-      <button
-        type="button"
-        onClick={open}
-        title="Edit manually"
-        className="opacity-0 transition group-hover/field:opacity-100 text-hub-text-muted hover:text-hub-cyan"
-      >
-        <Pencil className="h-2.5 w-2.5" />
-      </button>
-    </div>
-  );
-}
-
 // ── Main ClassCard ────────────────────────────────────────────────────────────
 export function ClassCard({
   dossier,
@@ -438,10 +382,8 @@ export function ClassCard({
   onHover,
   onHoverEnd,
   onOpenDashboard,
+  onUpdate,
 }: ClassCardProps) {
-  // Local overrides for manual data entry
-  const [localTitle, setLocalTitle] = useState(dossier.courseTitle ?? "");
-  const [localProfName, setLocalProfName] = useState(dossier.professorName ?? "");
 
   const rmp = dossier.logistics?.rate_my_professor;
   const sunsetSummary = getSunsetSummary(dossier.sunsetGradeDistribution);
@@ -518,9 +460,9 @@ export function ClassCard({
                 ) : null}
                 <span className="text-hub-text-muted font-normal text-sm">
                   <InlinePencilField
-                    value={localTitle}
+                    value={dossier.courseTitle ?? ""}
                     placeholder="Course title"
-                    onSave={setLocalTitle}
+                    onSave={(v) => onUpdate?.({ courseTitle: v })}
                   />
                 </span>
               </h3>
@@ -530,9 +472,9 @@ export function ClassCard({
                 </span>
                 <span className="text-sm text-hub-text-secondary">
                   <InlinePencilField
-                    value={localProfName}
+                    value={dossier.professorName ?? ""}
                     placeholder="Professor name"
-                    onSave={setLocalProfName}
+                    onSave={(v) => onUpdate?.({ professorName: v })}
                   />
                 </span>
               </div>

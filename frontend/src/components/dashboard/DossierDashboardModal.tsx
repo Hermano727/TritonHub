@@ -6,6 +6,7 @@ import {
   ChevronLeft,
   ChevronRight,
   ExternalLink,
+  FileUp,
   HelpCircle,
   Info,
   RotateCcw,
@@ -13,7 +14,8 @@ import {
   X,
   Zap,
 } from "lucide-react";
-import type { ClassDossier, CourseLogistics, EvidenceItem } from "@/types/dossier";
+import type { ClassDossier, CourseLogistics, DossierEditPatch, EvidenceItem } from "@/types/dossier";
+import { InlinePencilField } from "@/components/dashboard/InlinePencilField";
 import { getSunsetSummary } from "@/lib/mappers/courseEntryToDossier";
 import { isExamSection } from "@/lib/mappers/dossiersToScheduleItems";
 
@@ -226,9 +228,11 @@ type Props = {
   openIndex: number | null;
   onClose: () => void;
   onNavigate: (index: number) => void;
+  /** Called when user manually corrects a field. Changes held in workspace state until plan is saved. */
+  onUpdate?: (dossierId: string, patch: DossierEditPatch) => void;
 };
 
-export function DossierDashboardModal({ dossiers, openIndex, onClose, onNavigate }: Props) {
+export function DossierDashboardModal({ dossiers, openIndex, onClose, onNavigate, onUpdate }: Props) {
   const isOpen = openIndex !== null;
   const dossier = openIndex !== null ? dossiers[openIndex] : null;
   const total = dossiers.length;
@@ -306,6 +310,7 @@ export function DossierDashboardModal({ dossiers, openIndex, onClose, onNavigate
               total={total}
               onClose={onClose}
               onNavigate={onNavigate}
+              onUpdate={onUpdate ? (patch) => onUpdate(dossier.id, patch) : undefined}
             />
           </motion.div>
         </motion.div>
@@ -316,18 +321,57 @@ export function DossierDashboardModal({ dossiers, openIndex, onClose, onNavigate
 
 // ── Dashboard content (keyed for animation between courses) ──────────────────
 
+// ── Tristate boolean toggle (null / true / false) ─────────────────────────────
+
+function TristateToggle({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: boolean | null;
+  onChange: (v: boolean | null) => void;
+}) {
+  const cycle = () => {
+    if (value === null) onChange(true);
+    else if (value === true) onChange(false);
+    else onChange(null);
+  };
+
+  const display =
+    value === true ? { text: "Yes", cls: "border-emerald-500/30 bg-emerald-900/20 text-emerald-400" } :
+    value === false ? { text: "No", cls: "border-red-500/20 bg-red-900/10 text-red-400" } :
+    { text: "Unknown", cls: "border-white/[0.1] bg-white/[0.04] text-hub-text-muted" };
+
+  return (
+    <div className="flex items-center justify-between gap-3 py-1">
+      <span className="text-xs text-hub-text-secondary">{label}</span>
+      <button
+        type="button"
+        onClick={cycle}
+        title="Click to cycle: Yes → No → Unknown"
+        className={`rounded-full border px-2.5 py-0.5 text-[10px] font-semibold transition hover:opacity-80 ${display.cls}`}
+      >
+        {display.text}
+      </button>
+    </div>
+  );
+}
+
 function DashboardContent({
   dossier,
   index,
   total,
   onClose,
   onNavigate,
+  onUpdate,
 }: {
   dossier: ClassDossier;
   index: number;
   total: number;
   onClose: () => void;
   onNavigate: (i: number) => void;
+  onUpdate?: (patch: DossierEditPatch) => void;
 }) {
   const reduce = useReducedMotion();
   const log = dossier.logistics;
@@ -375,13 +419,25 @@ function DashboardContent({
                 Remote
               </span>
             )}
-            <span className="text-sm font-normal text-hub-text-muted">{dossier.courseTitle}</span>
+            <span className="text-sm font-normal text-hub-text-muted">
+              <InlinePencilField
+                value={dossier.courseTitle ?? ""}
+                placeholder="Course title"
+                onSave={(v) => onUpdate?.({ courseTitle: v })}
+              />
+            </span>
           </div>
           <div className="mt-1.5 flex items-center gap-2">
             <span className="flex h-6 w-6 items-center justify-center rounded-full border border-hub-cyan/30 bg-hub-cyan/10 text-[10px] font-bold text-hub-cyan">
               {dossier.professorInitials}
             </span>
-            <span className="text-sm text-hub-text-secondary">{dossier.professorName}</span>
+            <span className="text-sm text-hub-text-secondary">
+              <InlinePencilField
+                value={dossier.professorName ?? ""}
+                placeholder="Professor name"
+                onSave={(v) => onUpdate?.({ professorName: v })}
+              />
+            </span>
             {!professorInfoFound && (
               <span className="flex items-center gap-1 rounded-full border border-amber-500/25 bg-amber-900/15 px-2 py-0.5 text-[9px] font-semibold text-amber-400">
                 <Info className="h-2.5 w-2.5" /> No specific data found
@@ -391,6 +447,21 @@ function DashboardContent({
         </div>
 
         <div className="flex shrink-0 items-center gap-3">
+          {/* Upload syllabus — future feature placeholder */}
+          <div className="relative group/syllabus">
+            <button
+              type="button"
+              disabled
+              className="flex items-center gap-1.5 rounded-lg border border-white/[0.07] bg-white/[0.03] px-2.5 py-1.5 text-[11px] font-medium text-hub-text-muted/50 cursor-not-allowed"
+            >
+              <FileUp className="h-3.5 w-3.5 shrink-0" aria-hidden />
+              Upload syllabus
+            </button>
+            <div className="pointer-events-none absolute right-0 top-full mt-1.5 z-10 w-52 rounded-lg border border-white/[0.08] bg-[#0d1b2e] px-3 py-2 text-[10px] leading-relaxed text-hub-text-muted opacity-0 transition-opacity group-hover/syllabus:opacity-100">
+              <span className="mb-1 block font-semibold text-hub-cyan/70">Coming soon</span>
+              Upload a course syllabus to auto-fill grading scheme, attendance policy, and other logistics.
+            </div>
+          </div>
           {/* Course dots — clickable navigation */}
           {total > 1 && (
             <div className="flex items-center gap-1.5">
@@ -669,20 +740,19 @@ function DashboardContent({
           <div className="border-t border-white/[0.06] px-5 pb-5">
             <div className="grid grid-cols-1 gap-4 pt-4 md:grid-cols-2">
 
-              {/* Grade breakdown */}
+              {/* Grade breakdown — editable */}
               <div className="rounded-xl border border-white/[0.07] bg-[#0d1b2e] px-4 py-3">
                 <p className="mb-2 text-[10px] font-semibold text-hub-text-muted">
                   Grading
                 </p>
-                {log?.grade_breakdown ? (
-                  <div className="flex flex-wrap gap-x-4 gap-y-1">
-                    {log.grade_breakdown.split(/[,;]/).map((s) => s.trim()).filter(Boolean).map((seg, i) => (
-                      <span key={i} className="text-xs text-hub-text-secondary">{seg}</span>
-                    ))}
-                  </div>
-                ) : (
-                  <p className="text-xs text-hub-text-muted/60">Grade breakdown not found</p>
-                )}
+                <div className="text-xs text-hub-text-secondary">
+                  <InlinePencilField
+                    value={log?.grade_breakdown ?? ""}
+                    placeholder="e.g. Homework 30%, Midterm 30%, Final 40%"
+                    onSave={(v) => onUpdate?.({ logistics: { grade_breakdown: v || null } })}
+                    multiline
+                  />
+                </div>
                 {/* Course page link */}
                 {log?.course_webpage_url && (
                   <a href={log.course_webpage_url} target="_blank" rel="noopener noreferrer"
@@ -692,12 +762,33 @@ function DashboardContent({
                 )}
               </div>
 
-              {/* Attribute pills */}
+              {/* Course attributes — editable toggles */}
               <div className="rounded-xl border border-white/[0.07] bg-[#0d1b2e] px-4 py-3">
                 <p className="mb-2 text-[10px] font-semibold text-hub-text-muted">
                   Course attributes
+                  {onUpdate && (
+                    <span className="ml-2 text-hub-text-muted/50">· click to correct</span>
+                  )}
                 </p>
-                {logPills.length > 0 ? (
+                {onUpdate ? (
+                  <div className="divide-y divide-white/[0.04]">
+                    <TristateToggle
+                      label="Attendance required"
+                      value={log?.attendance_required ?? null}
+                      onChange={(v) => onUpdate({ logistics: { attendance_required: v } })}
+                    />
+                    <TristateToggle
+                      label="Textbook required"
+                      value={log?.textbook_required ?? null}
+                      onChange={(v) => onUpdate({ logistics: { textbook_required: v } })}
+                    />
+                    <TristateToggle
+                      label="Podcasts available"
+                      value={log?.podcasts_available ?? null}
+                      onChange={(v) => onUpdate({ logistics: { podcasts_available: v } })}
+                    />
+                  </div>
+                ) : logPills.length > 0 ? (
                   <div className="flex flex-wrap gap-1.5">
                     {logPills.map((p) => (
                       <LogisticPill key={p.label} label={p.label} tone={p.tone} />
