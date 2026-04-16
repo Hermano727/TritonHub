@@ -4,9 +4,11 @@ import { useEffect, useRef, useState, useCallback } from "react";
 import Link from "next/link";
 import {
   BookmarkCheck,
+  Check,
   FileText,
   FolderOpen,
   Home,
+  MoreHorizontal,
   Plus,
   Settings,
   Trash,
@@ -19,7 +21,31 @@ export type SidebarPlanRow = {
   id: string;
   label: string;
   subtitle?: string;
+  courseCount?: number;
+  trendLabel?: string;
+  fitnessScore?: number;
+  fitnessMax?: number;
+  updatedAt?: string;
 };
+
+function relativeTime(iso: string): string {
+  const diff = Date.now() - new Date(iso).getTime();
+  const mins = Math.floor(diff / 60_000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  const days = Math.floor(hrs / 24);
+  if (days < 7) return `${days}d ago`;
+  return new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
+function trendColor(score: number | undefined): string {
+  if (score == null) return "text-hub-text-muted";
+  if (score >= 75) return "text-hub-success";
+  if (score >= 50) return "text-hub-gold";
+  return "text-hub-danger";
+}
 
 type RightSidebarProps = {
   planSectionTitle: string;
@@ -29,6 +55,7 @@ type RightSidebarProps = {
   newPlanLabel: string;
   onNewPlan?: () => void;
   onDeletePlan?: (id: string) => void;
+  onRenamePlan?: (id: string, newTitle: string) => void;
   vaultItems: VaultItem[];
   vaultSynced: boolean;
 };
@@ -78,12 +105,17 @@ export function RightSidebar({
   newPlanLabel,
   onNewPlan,
   onDeletePlan,
+  onRenamePlan,
   vaultItems,
   vaultSynced,
 }: RightSidebarProps) {
   const [activePanel, setActivePanel] = useState<ActivePanel | null>(null);
   // Tracks the last opened panel so content stays visible during slide-out
   const [shownPanel, setShownPanel] = useState<ActivePanel>("plans");
+  // 3-dot menu state
+  const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
+  const [renamingId, setRenamingId] = useState<string | null>(null);
+  const [renameValue, setRenameValue] = useState("");
   const railRef = useRef<HTMLElement>(null);
   const flyoutRef = useRef<HTMLDivElement>(null);
   const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -149,33 +181,93 @@ export function RightSidebar({
               ) : (
                 plans.map((p) => {
                   const active = p.id === activePlanId;
+                  const menuOpen = menuOpenId === p.id;
+                  const renaming = renamingId === p.id;
                   return (
                     <li key={p.id}>
-                      <div className="flex items-center gap-2">
-                        <button
-                          type="button"
-                          onClick={() => onSelectPlan(p.id)}
-                          className={`flex flex-1 flex-col rounded-lg px-3 py-2 text-left text-sm transition ${
-                            active
-                              ? "border-l-2 border-hub-cyan bg-white/[0.04] text-hub-text"
-                              : "border-l-2 border-transparent text-hub-text-secondary hover:bg-white/[0.03]"
-                          }`}
-                        >
-                          <span className="flex items-center justify-between gap-2">
-                            <span className="min-w-0 truncate">{p.label}</span>
-                            {active ? (
-                              <span className="shrink-0 text-[10px] font-medium text-hub-cyan">
-                                Active
-                              </span>
-                            ) : null}
-                          </span>
-                          {p.subtitle ? (
-                            <span className="mt-0.5 text-[10px] text-hub-text-muted">
-                              {p.subtitle}
+                      <div className="flex items-center gap-1">
+                        {/* Rename inline input */}
+                        {renaming ? (
+                          <div className="flex flex-1 items-center gap-1 px-1">
+                            <input
+                              autoFocus
+                              value={renameValue}
+                              onChange={(e) => setRenameValue(e.target.value)}
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter" && renameValue.trim()) {
+                                  onRenamePlan?.(p.id, renameValue.trim());
+                                  setRenamingId(null);
+                                } else if (e.key === "Escape") {
+                                  setRenamingId(null);
+                                }
+                              }}
+                              onBlur={() => {
+                                if (renameValue.trim()) onRenamePlan?.(p.id, renameValue.trim());
+                                setRenamingId(null);
+                              }}
+                              className="min-w-0 flex-1 rounded border border-hub-cyan/40 bg-hub-bg/60 px-2 py-1 text-xs text-hub-text outline-none focus:border-hub-cyan/70"
+                            />
+                            <button
+                              type="button"
+                              onMouseDown={(e) => {
+                                e.preventDefault();
+                                if (renameValue.trim()) {
+                                  onRenamePlan?.(p.id, renameValue.trim());
+                                }
+                                setRenamingId(null);
+                              }}
+                              className="inline-flex h-6 w-6 items-center justify-center rounded text-hub-success hover:bg-white/[0.06]"
+                            >
+                              <Check className="h-3.5 w-3.5" />
+                            </button>
+                          </div>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => onSelectPlan(p.id)}
+                            className={`flex flex-1 flex-col rounded-lg px-3 py-2 text-left text-sm transition ${
+                              active
+                                ? "border-l-2 border-hub-cyan bg-white/[0.04] text-hub-text"
+                                : "border-l-2 border-transparent text-hub-text-secondary hover:bg-white/[0.03]"
+                            }`}
+                          >
+                            <span className="flex items-center justify-between gap-2">
+                              <span className="min-w-0 truncate font-medium">{p.label}</span>
+                              {active && (
+                                <span className="shrink-0 text-[10px] font-semibold text-hub-cyan">
+                                  Active
+                                </span>
+                              )}
                             </span>
-                          ) : null}
-                        </button>
-                        {onDeletePlan ? (
+                            {p.subtitle && (
+                              <span className="mt-1 text-[10px] text-hub-cyan/60">
+                                {p.subtitle}
+                              </span>
+                            )}
+                            {(p.courseCount != null || p.trendLabel || p.updatedAt) && (
+                              <span className="mt-2 flex flex-col gap-0.5">
+                                {p.courseCount != null && (
+                                  <span className="text-[10px] text-hub-text-secondary">
+                                    {p.courseCount} course{p.courseCount !== 1 ? "s" : ""}
+                                  </span>
+                                )}
+                                {p.trendLabel && (
+                                  <span className={`text-[10px] font-medium ${trendColor(p.fitnessScore)}`}>
+                                    {p.trendLabel}
+                                  </span>
+                                )}
+                                {p.updatedAt && (
+                                  <span className="text-[10px] text-hub-text-secondary/60">
+                                    {relativeTime(p.updatedAt)}
+                                  </span>
+                                )}
+                              </span>
+                            )}
+                          </button>
+                        )}
+
+                        {/* Quick delete */}
+                        {onDeletePlan && !renaming && (
                           <button
                             type="button"
                             onClick={(e) => {
@@ -183,11 +275,62 @@ export function RightSidebar({
                               onDeletePlan(p.id);
                             }}
                             title="Delete plan"
-                            className="inline-flex h-8 w-8 items-center justify-center rounded-md text-hub-text-secondary hover:text-red-400"
+                            className="inline-flex h-7 w-7 items-center justify-center rounded-md text-hub-text-secondary hover:text-red-400"
                           >
-                            <Trash className="h-4 w-4" />
+                            <Trash className="h-3.5 w-3.5" />
                           </button>
-                        ) : null}
+                        )}
+
+                        {/* 3-dot menu */}
+                        {(onDeletePlan || onRenamePlan) && !renaming && (
+                          <div className="relative">
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setMenuOpenId(menuOpen ? null : p.id);
+                              }}
+                              title="More options"
+                              className="inline-flex h-7 w-7 items-center justify-center rounded-md text-hub-text-secondary hover:text-hub-text"
+                            >
+                              <MoreHorizontal className="h-3.5 w-3.5" />
+                            </button>
+                            {menuOpen && (
+                              <div
+                                className="absolute right-0 top-8 z-50 min-w-[140px] rounded-lg border border-white/[0.1] bg-hub-surface-elevated shadow-xl"
+                                onMouseLeave={() => setMenuOpenId(null)}
+                              >
+                                {onRenamePlan && (
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setMenuOpenId(null);
+                                      setRenameValue(p.label);
+                                      setRenamingId(p.id);
+                                    }}
+                                    className="flex w-full items-center gap-2 px-3 py-2 text-xs text-hub-text-secondary transition hover:bg-white/[0.05] hover:text-hub-text"
+                                  >
+                                    Rename
+                                  </button>
+                                )}
+                                {onDeletePlan && (
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setMenuOpenId(null);
+                                      onDeletePlan(p.id);
+                                    }}
+                                    className="flex w-full items-center gap-2 px-3 py-2 text-xs text-red-400/80 transition hover:bg-white/[0.05] hover:text-red-400"
+                                  >
+                                    Delete
+                                  </button>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        )}
                       </div>
                     </li>
                   );

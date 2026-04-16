@@ -22,6 +22,7 @@ export function ExamsPanel({ classes }: { classes: ClassDossier[] }) {
   // Group exam sections by course code
   const grouped = new Map<string, ExamEntry[]>();
   for (const c of classes) {
+    if (!c.courseCode) continue;
     for (const m of c.meetings) {
       if (!isExamSection(m.section_type)) continue;
       const existing = grouped.get(c.courseCode) ?? [];

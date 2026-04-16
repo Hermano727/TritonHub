@@ -1,5 +1,20 @@
 export type UiPhase = "idle" | "processing" | "dashboard";
 
+export type TransitProfile = "walking" | "biking" | "spin" | "car";
+export type PriorityType = "career" | "research" | "interest" | "grad_school";
+export type SkillFocus = "project" | "theoretical" | "mixed";
+
+export type ScheduleBriefing = {
+  scheduleTitle: string;
+  priority: PriorityType;
+  balancedDifficulty: boolean;
+  skillFocus: SkillFocus;
+  transitProfile: TransitProfile;
+  careerGoals?: string;
+  currentWorries?: string;
+  externalCommitments?: string;
+};
+
 export type AlertSeverity = "critical" | "warning" | "info";
 
 export interface QuarterRef {

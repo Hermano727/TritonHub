@@ -22,10 +22,36 @@ import type {
   VaultItem,
 } from "@/types/dossier";
 import type { DossierScheduleWorkspaceHandle } from "@/components/dashboard/DossierScheduleWorkspace";
+import { courseResearchResultToDossier } from "@/lib/mappers/courseEntryToDossier";
+import type { CourseResearchResult } from "@/lib/api/parse";
 
 const API_BASE = "http://localhost:8000";
 
-type SidebarPlan = { id: string; label: string; subtitle?: string };
+/**
+ * Ensure every ClassDossier has a non-empty `id`.
+ * Plans saved before `id` was added to the type will have `id: undefined` when
+ * deserialized from JSON. Derive it from courseCode so blockKeys are unique.
+ */
+function normalizeDossierIds(classes: ClassDossier[]): ClassDossier[] {
+  return classes.map((c, i) => {
+    if (c.id) return c;
+    const base = c.courseCode
+      ? c.courseCode.toLowerCase().replace(/\s+/g, "-")
+      : `course-${i}`;
+    return { ...c, id: base };
+  });
+}
+
+type SidebarPlan = {
+  id: string;
+  label: string;
+  subtitle?: string;
+  courseCount?: number;
+  trendLabel?: string;
+  fitnessScore?: number;
+  fitnessMax?: number;
+  updatedAt?: string;
+};
 
 type UsePlanSyncReturn = {
   authed: boolean;
@@ -39,10 +65,13 @@ type UsePlanSyncReturn = {
   viewEvaluation: ScheduleEvaluation;
   viewCommitments: ScheduleCommitment[];
   persistCompletedSession: (payload: SavedPlanPayloadV1) => Promise<void>;
+  handleSave: (titleOverride?: string) => Promise<void>;
   handleSaveOverwrite: () => Promise<void>;
   handleSaveAsNew: () => Promise<void>;
   handleNewPlan: () => Promise<void>;
   handleDeletePlan: (id: string) => Promise<void>;
+  handleRenamePlan: (id: string, newTitle: string) => Promise<void>;
+  activePlanTitle: string;
 };
 
 type Params = {
@@ -67,12 +96,15 @@ async function fetchExpandedPlan(
     });
     if (!res.ok) return null;
     const data = await res.json() as {
-      classes: ClassDossier[];
+      classes: CourseResearchResult[];
       evaluation: ScheduleEvaluation | null;
       commitments: ScheduleCommitment[];
     };
+    // The expanded endpoint returns snake_case CourseResearchResult-shaped objects.
+    // Run them through the same mapper used by the research flow so that
+    // courseCode, courseTitle, professorName etc. are properly set on ClassDossier.
     return {
-      classes: data.classes ?? [],
+      classes: (data.classes ?? []).map(courseResearchResultToDossier),
       evaluation: data.evaluation ?? mockDossier.evaluation,
       commitments: data.commitments ?? [],
     };
@@ -210,14 +242,43 @@ export function usePlanSync({
     if (!authed) {
       return mockDossier.quarters.map((q) => ({ id: q.id, label: q.label }));
     }
-    return remotePlans.map((p) => ({
-      id: p.id,
-      label: p.title?.trim() || "Untitled plan",
-      subtitle:
-        p.quarter_label ||
-        (p.status === "draft" ? "Draft" : undefined) ||
-        undefined,
-    }));
+    return remotePlans.map((p) => {
+      let courseCount: number | undefined;
+      let trendLabel: string | undefined;
+      let fitnessScore: number | undefined;
+      let fitnessMax: number | undefined;
+      try {
+        const raw = p.payload as Record<string, unknown> | null;
+        if (raw) {
+          const ver = (raw.version as number) ?? 1;
+          if (ver === 2 && Array.isArray(raw.class_refs)) {
+            courseCount = (raw.class_refs as unknown[]).length;
+          } else if (Array.isArray(raw.classes)) {
+            courseCount = (raw.classes as unknown[]).length;
+          }
+          const ev = raw.evaluation as { fitnessScore?: number; fitnessMax?: number; trendLabel?: string } | undefined;
+          if (ev) {
+            trendLabel = ev.trendLabel;
+            fitnessScore = ev.fitnessScore;
+            fitnessMax = ev.fitnessMax;
+          }
+        }
+      } catch { /* malformed payload — skip metadata */ }
+
+      return {
+        id: p.id,
+        label: p.title?.trim() || "Untitled plan",
+        subtitle:
+          p.quarter_label ||
+          (p.status === "draft" ? "Draft" : undefined) ||
+          undefined,
+        courseCount,
+        trendLabel,
+        fitnessScore,
+        fitnessMax,
+        updatedAt: p.updated_at,
+      };
+    });
   }, [authed, remotePlans]);
 
   const sidebarVault = useMemo<VaultItem[]>(() => {
@@ -240,7 +301,7 @@ export function usePlanSync({
     // v2 plan — use server-expanded data if available
     if (expandedClasses !== null) {
       return {
-        viewClasses: expandedClasses,
+        viewClasses: normalizeDossierIds(expandedClasses),
         viewEvaluation: expandedEvaluation ?? evaluation,
         viewCommitments: expandedCommitments ?? [],
       };
@@ -252,7 +313,7 @@ export function usePlanSync({
       const parsed = parsePlanPayload(plan.payload);
       if (parsed.classes.length > 0) {
         return {
-          viewClasses: parsed.classes,
+          viewClasses: normalizeDossierIds(parsed.classes),
           viewEvaluation: parsed.evaluation,
           viewCommitments: parsed.commitments ?? [],
         };
@@ -317,7 +378,7 @@ export function usePlanSync({
       : mockDossier.activeQuarterId;
   };
 
-  const _saveplan = useCallback(async (planId: string | null, isNew: boolean) => {
+  const _saveplan = useCallback(async (planId: string | null, isNew: boolean, titleOverride?: string) => {
     const supabase = createClient();
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return;
@@ -335,13 +396,14 @@ export function usePlanSync({
 
     const titleSuffix = new Date().toLocaleDateString(undefined, { month: "short", day: "numeric" });
     const qLabel = mockDossier.quarters.find((q) => q.id === activeQ)?.label ?? "";
+    const autoTitle = `${qLabel || "Schedule"} · ${titleSuffix}`;
 
     if (isNew || !planId) {
       const { data } = await supabase
         .from("saved_plans")
         .insert({
           user_id: user.id,
-          title: `${qLabel || "Schedule"} · ${titleSuffix}`,
+          title: titleOverride?.trim() || autoTitle,
           quarter_label: qLabel,
           status: "draft",
           payload_version: payloadVersion,
@@ -400,6 +462,15 @@ export function usePlanSync({
     }
   }, [loadHubData, onPlanCreated]);
 
+  // Decides create-vs-overwrite automatically based on whether activePlanId is
+  // a real saved plan row. No try/catch — errors propagate to the caller so it
+  // can show a user-friendly message.
+  const handleSave = useCallback(async (titleOverride?: string) => {
+    const pid = activePlanIdRef.current;
+    const isRealPlan = remotePlansRef.current.some((p) => p.id === pid);
+    await _saveplan(isRealPlan ? pid : null, !isRealPlan, titleOverride);
+  }, [_saveplan]);
+
   const handleDeletePlan = useCallback(async (id: string) => {
     if (!authedRef.current) return;
     try {
@@ -409,6 +480,17 @@ export function usePlanSync({
       if (activePlanIdRef.current === id) setActivePlanId("");
     } catch {
       /* ignore delete errors */
+    }
+  }, [loadHubData]);
+
+  const handleRenamePlan = useCallback(async (id: string, newTitle: string) => {
+    if (!authedRef.current || !newTitle.trim()) return;
+    try {
+      const supabase = createClient();
+      await supabase.from("saved_plans").update({ title: newTitle.trim() }).eq("id", id);
+      await loadHubData();
+    } catch {
+      /* ignore rename errors */
     }
   }, [loadHubData]);
 
@@ -424,9 +506,12 @@ export function usePlanSync({
     viewEvaluation,
     viewCommitments,
     persistCompletedSession,
+    handleSave,
     handleSaveOverwrite,
     handleSaveAsNew,
     handleNewPlan,
     handleDeletePlan,
+    handleRenamePlan,
+    activePlanTitle: remotePlans.find((p) => p.id === activePlanId)?.title ?? "",
   };
 }

@@ -1,4 +1,4 @@
-import type { CourseLogistics, FitnessCategory } from "@/types/dossier";
+import type { CourseLogistics, FitnessCategory, ScheduleBriefing } from "@/types/dossier";
 
 export interface SectionMeeting {
   section_type: string;
@@ -90,11 +90,14 @@ export interface FitAnalysisResult {
   recommendation: string;
 }
 
-export async function analyzeFit(results: CourseResearchResult[]): Promise<FitAnalysisResult> {
+export async function analyzeFit(
+  results: CourseResearchResult[],
+  context?: ScheduleBriefing,
+): Promise<FitAnalysisResult> {
   const res = await fetch("http://localhost:8000/api/fit-analysis", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ results }),
+    body: JSON.stringify({ results, user_context: context ?? null }),
   });
   if (!res.ok) throw new Error(`Fit analysis failed: ${res.status} ${res.statusText}`);
   return res.json() as Promise<FitAnalysisResult>;

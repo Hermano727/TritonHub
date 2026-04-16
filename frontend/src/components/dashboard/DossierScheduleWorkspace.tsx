@@ -29,7 +29,7 @@ import { WeeklyCalendar, type CourseBlock, type CommitmentBlock, COL_TO_DAY, par
 import { useCalendarSyncHandler } from "@/components/layout/calendar-sync-context";
 import { useCalendarState } from "@/components/layout/calendar-state-context";
 import { useScheduleEditor, useScheduleFingerprint } from "@/hooks/useScheduleEditor";
-import type { ClassDossier, ScheduleCommitment, ScheduleEvaluation, ScheduleItem, TransitionInsight } from "@/types/dossier";
+import type { ClassDossier, ScheduleCommitment, ScheduleEvaluation, ScheduleItem, TransitionInsight, TransitProfile } from "@/types/dossier";
 
 function isDossierRemoteOnly(dossier: ClassDossier): boolean {
   const regular = dossier.meetings.filter((m) => !isExamSection(m.section_type));
@@ -60,6 +60,103 @@ function minutesFromTimeInput(iso: string): number | null {
   return h * 60 + m;
 }
 
+function haversineDistanceMiles(lat1: number, lng1: number, lat2: number, lng2: number): number {
+  const R = 3958.8; // Earth radius in miles
+  const dLat = ((lat2 - lat1) * Math.PI) / 180;
+  const dLng = ((lng2 - lng1) * Math.PI) / 180;
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos((lat1 * Math.PI) / 180) * Math.cos((lat2 * Math.PI) / 180) * Math.sin(dLng / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+type WalkAdvisory = { key: string; message: string };
+
+function parseMinutesFromAmPm(t: string): number | null {
+  const m = t.match(/^(\d+):(\d+)\s*(AM|PM)$/i);
+  if (!m) return null;
+  let h = parseInt(m[1], 10);
+  const min = parseInt(m[2], 10);
+  const period = m[3].toUpperCase();
+  if (period === "PM" && h !== 12) h += 12;
+  if (period === "AM" && h === 12) h = 0;
+  return h * 60 + min;
+}
+
+function computeWalkAdvisories(classes: ClassDossier[]): WalkAdvisory[] {
+  // Collect all meetings with resolved lat/lng and a parseable end_time
+  type MeetingInfo = {
+    courseCode: string;
+    locationName: string;
+    day: string;
+    startMin: number;
+    endMin: number;
+    lat: number;
+    lng: number;
+  };
+  const meetings: MeetingInfo[] = [];
+  for (const c of classes) {
+    for (const m of c.meetings) {
+      if (!m.lat || !m.lng || m.geocode_status === "unresolved") continue;
+      const start = parseMinutesFromAmPm(m.start_time);
+      const end = parseMinutesFromAmPm(m.end_time);
+      if (start === null || end === null) continue;
+      const days = m.days ? m.days.split("") : [];
+      // Flatten by day so we can sort per-day
+      const parsedDays: string[] = [];
+      let i = 0;
+      while (i < m.days.length) {
+        if (i + 1 < m.days.length && ["Tu", "Th", "Sa", "Su"].includes(m.days.slice(i, i + 2))) {
+          parsedDays.push(m.days.slice(i, i + 2));
+          i += 2;
+        } else {
+          parsedDays.push(m.days[i]);
+          i += 1;
+        }
+      }
+      for (const day of parsedDays) {
+        meetings.push({
+          courseCode: c.courseCode,
+          locationName: m.buildingDisplayName ?? m.location ?? m.building_code ?? "Unknown",
+          day,
+          startMin: start,
+          endMin: end,
+          lat: m.lat,
+          lng: m.lng,
+        });
+      }
+    }
+  }
+
+  // Group by day, sort by start time, check back-to-back gaps
+  const byDay = new Map<string, MeetingInfo[]>();
+  for (const m of meetings) {
+    const list = byDay.get(m.day) ?? [];
+    list.push(m);
+    byDay.set(m.day, list);
+  }
+
+  const advisories: WalkAdvisory[] = [];
+  for (const list of byDay.values()) {
+    list.sort((a, b) => a.startMin - b.startMin);
+    for (let i = 0; i < list.length - 1; i++) {
+      const a = list[i];
+      const b = list[i + 1];
+      // Only flag if gap between classes is ≤ 20 minutes (potentially tight)
+      const gapMin = b.startMin - a.endMin;
+      if (gapMin > 20) continue;
+      const dist = haversineDistanceMiles(a.lat, a.lng, b.lat, b.lng);
+      if (dist > 0.5) {
+        advisories.push({
+          key: `${a.courseCode}-${b.courseCode}-${a.day}`,
+          message: `Logistics Note: ${a.locationName} → ${b.locationName} (${dist.toFixed(1)} mi, ${gapMin} min gap). Verify if attendance is mandatory or tardiness is acceptable.`,
+        });
+      }
+    }
+  }
+  return advisories;
+}
+
 type MainTab = "dossier" | "schedule";
 type WorkspacePhase = "overview" | "dossiers" | "logistics" | "review";
 
@@ -83,7 +180,20 @@ type Props = {
   transitionInsights?: TransitionInsight[];
   calendarHeaderActions?: ReactNode;
   initialCommitments?: ScheduleCommitment[];
+  // Save flow
+  onSave?: () => Promise<void>;
+  isSaving?: boolean;
+  lastSavedAt?: Date | null;
+  saveError?: string | null;
+  showSavePrompt?: boolean;
+  onSavePromptDismiss?: () => void;
+  // Personalization
+  transitProfile?: TransitProfile;
 };
+
+function formatSaveTime(d: Date): string {
+  return d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+}
 
 export const DossierScheduleWorkspace = forwardRef(function DossierScheduleWorkspace(
   {
@@ -94,6 +204,13 @@ export const DossierScheduleWorkspace = forwardRef(function DossierScheduleWorks
     transitionInsights = [],
     calendarHeaderActions,
     initialCommitments = [],
+    onSave,
+    isSaving = false,
+    lastSavedAt,
+    saveError,
+    showSavePrompt = false,
+    onSavePromptDismiss,
+    transitProfile,
   }: Props,
   ref: React.Ref<DossierScheduleWorkspaceHandle | null>,
 ) {
@@ -143,6 +260,10 @@ export const DossierScheduleWorkspace = forwardRef(function DossierScheduleWorks
   const { calendarVisible, reportCalendarVisible, registerOpenFullscreen, openCalendar } = useCalendarState();
   const calendarRef = useRef<HTMLDivElement>(null);
   const dossierMarkerMap = useMemo(() => buildDossierMarkerMap(scheduleItems, classes), [scheduleItems, classes]);
+  const walkAdvisories = useMemo(
+    () => (transitProfile === "walking" ? computeWalkAdvisories(classes) : []),
+    [transitProfile, classes],
+  );
 
   useEffect(() => {
     registerOpenFullscreen(() => setFullscreenOpen(true));
@@ -393,6 +514,39 @@ export const DossierScheduleWorkspace = forwardRef(function DossierScheduleWorks
               </button>
             );
           })}
+
+          {/* Save plan — far right of phase nav */}
+          {onSave && (
+            <div className="ml-auto flex items-center gap-3 pl-4">
+              <AnimatePresence mode="wait">
+                {saveError ? (
+                  <motion.span
+                    key="save-error"
+                    initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+                    className="text-xs text-hub-danger"
+                  >
+                    {saveError}
+                  </motion.span>
+                ) : lastSavedAt ? (
+                  <motion.span
+                    key="save-ts"
+                    initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+                    className="text-xs text-white/40"
+                  >
+                    Last saved {formatSaveTime(lastSavedAt)}
+                  </motion.span>
+                ) : null}
+              </AnimatePresence>
+              <button
+                type="button"
+                onClick={() => void onSave()}
+                disabled={isSaving}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-hub-cyan/35 bg-hub-cyan/10 px-3 py-1.5 text-xs font-semibold text-hub-cyan transition hover:bg-hub-cyan/18 disabled:opacity-50"
+              >
+                {isSaving ? "Saving…" : "Save plan"}
+              </button>
+            </div>
+          )}
         </nav>
 
         {/* Phase 1: Overview — 60/40 hero layout */}
@@ -446,7 +600,18 @@ export const DossierScheduleWorkspace = forwardRef(function DossierScheduleWorks
             key="phase-logistics"
             initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
-            className="flex h-[85vh] overflow-hidden rounded-xl border border-white/[0.06]"
+            className="space-y-3"
+          >
+            {/* Walk advisories — only shown when transit profile is walking */}
+            {walkAdvisories.length > 0 && (
+              <div className="rounded-xl border border-hub-gold/20 bg-hub-gold/[0.06] px-4 py-3 space-y-1.5">
+                <p className="text-xs font-semibold text-hub-gold">Walk advisories</p>
+                {walkAdvisories.map((a) => (
+                  <p key={a.key} className="text-xs text-white/60">{a.message}</p>
+                ))}
+              </div>
+            )}
+          <div className="flex h-[85vh] overflow-hidden rounded-xl border border-white/[0.06]"
           >
             {/* Left pane: Map — 60% */}
             <div className="relative flex-[3] min-w-0 overflow-hidden">
@@ -498,6 +663,7 @@ export const DossierScheduleWorkspace = forwardRef(function DossierScheduleWorks
                 </div>
               </div>
             </div>
+          </div>
           </motion.div>
         )}
 
@@ -507,8 +673,48 @@ export const DossierScheduleWorkspace = forwardRef(function DossierScheduleWorks
             key="phase-review"
             initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
-            className="grid grid-cols-3 gap-8 items-start"
+            className="space-y-6"
           >
+            {/* One-time save prompt — shown on first visit to Review after a fresh upload */}
+            <AnimatePresence>
+              {showSavePrompt && (
+                <motion.div
+                  key="save-prompt"
+                  initial={{ opacity: 0, y: -8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -8 }}
+                  transition={{ duration: 0.25 }}
+                  className="flex items-start justify-between gap-4 rounded-xl border border-hub-cyan/20 bg-hub-cyan/[0.07] px-5 py-4"
+                >
+                  <div className="space-y-0.5">
+                    <p className="text-sm font-semibold text-white/90">
+                      Do you want to save this schedule?
+                    </p>
+                    <p className="text-xs text-white/50">
+                      Note: You can save your schedule at any time using the Save plan button above.
+                    </p>
+                  </div>
+                  <div className="flex shrink-0 items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => { void onSave?.(); onSavePromptDismiss?.(); }}
+                      className="rounded-lg bg-hub-cyan px-3 py-1.5 text-xs font-semibold text-hub-bg transition hover:bg-hub-cyan/85"
+                    >
+                      Save schedule
+                    </button>
+                    <button
+                      type="button"
+                      onClick={onSavePromptDismiss}
+                      className="rounded-lg px-3 py-1.5 text-xs font-medium text-white/50 transition hover:text-white/70"
+                    >
+                      Not now
+                    </button>
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+
+            <div className="grid grid-cols-3 gap-8 items-start">
             {/* Left 2/3: HUD + Cards */}
             <div className="col-span-2 space-y-8">
               <DifficultyScoreHud evaluation={evaluation} />
@@ -562,6 +768,7 @@ export const DossierScheduleWorkspace = forwardRef(function DossierScheduleWorks
               </div>
               <ExamsPanel classes={classes} />
             </div>
+            </div>{/* end grid grid-cols-3 */}
           </motion.div>
         )}
       </div>

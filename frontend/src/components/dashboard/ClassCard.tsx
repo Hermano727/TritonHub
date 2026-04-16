@@ -191,6 +191,42 @@ function EvidenceCard({ item }: { item: EvidenceItem }) {
   );
 }
 
+// ── Compact stacked bar for grade distribution in card view ──────────────────
+function SunsetGroupBar({ groups, sampleSize }: { groups: SunsetGroup[]; sampleSize: number }) {
+  if (!groups.length || !sampleSize) return null;
+  return (
+    <div className="space-y-1.5 rounded-lg border border-white/[0.06] bg-hub-bg/20 px-3 py-2.5">
+      <p className="text-[10px] font-semibold uppercase tracking-wide text-white/40">
+        Grade distribution
+      </p>
+      {/* Stacked bar */}
+      <div className="flex h-3 w-full overflow-hidden rounded-full">
+        {groups.map((g) => (
+          <div
+            key={g.label}
+            style={{ width: `${g.percent}%`, backgroundColor: g.color }}
+            title={`${g.label}: ${Math.round(g.percent)}%`}
+          />
+        ))}
+      </div>
+      {/* Labels */}
+      <div className="flex items-center gap-3 flex-wrap">
+        {groups.map((g) => (
+          <span key={g.label} className="flex items-center gap-1 text-[10px] text-white/60">
+            <span
+              className="h-1.5 w-1.5 shrink-0 rounded-full"
+              style={{ backgroundColor: g.color }}
+            />
+            <span className="font-semibold" style={{ color: g.color }}>{g.label}</span>
+            <span>{Math.round(g.percent)}%</span>
+          </span>
+        ))}
+        <span className="ml-auto text-[9px] text-white/30">{sampleSize} students</span>
+      </div>
+    </div>
+  );
+}
+
 // ── Grade breakdown strip ──────────────────────────────────────────────────────
 function GradeBreakdownStrip({ breakdown }: { breakdown: string | null | undefined }) {
   if (!breakdown) {
@@ -586,6 +622,11 @@ export function ClassCard({
                 </>
               )}
             </div>
+          )}
+
+          {/* Sunset grade distribution bar */}
+          {sunsetPrimaryGroups.length > 0 && (
+            <SunsetGroupBar groups={sunsetPrimaryGroups} sampleSize={sunsetSampleSize} />
           )}
 
           {/* Grade breakdown / course logistics strip */}

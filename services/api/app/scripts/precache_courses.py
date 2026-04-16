@@ -138,6 +138,29 @@ def filter_by_prefix(
     ]
 
 
+def is_grad_course(course_code: str) -> bool:
+    """
+    Return True if the course number is 200 or above (UCSD graduate-level).
+
+    e.g. "CSE 200", "BIOL 220A" → True
+         "CSE 120", "MATH 20C"  → False
+    """
+    import re
+    tokens = course_code.split()
+    if len(tokens) < 2:
+        return False
+    # Extract the leading integer from the course number token (e.g. "103B" → 103)
+    m = re.match(r"(\d+)", tokens[1])
+    if not m:
+        return False
+    return int(m.group(1)) >= 200
+
+
+def filter_undergrad_only(pairs: list[tuple[str, str]]) -> list[tuple[str, str]]:
+    """Drop graduate courses (course number ≥ 200) from the list."""
+    return [(cc, pn) for (cc, pn) in pairs if not is_grad_course(cc)]
+
+
 # ---------------------------------------------------------------------------
 # Per-pair caching
 # ---------------------------------------------------------------------------
@@ -191,6 +214,10 @@ async def main(
     _log.info("Fetching pairs from sunset_grade_distributions...")
     all_pairs = fetch_pairs_from_sunset(client)
     _log.info("Found %d (course, professor) pairs in sunset_grade_distributions", len(all_pairs))
+
+    # Always skip graduate courses (course number ≥ 200) — they're out of scope.
+    all_pairs = filter_undergrad_only(all_pairs)
+    _log.info("After skipping grad courses (≥200): %d pairs remain", len(all_pairs))
 
     if not force:
         _log.info("Fetching already-cached pairs...")

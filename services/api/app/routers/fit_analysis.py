@@ -10,6 +10,6 @@ async def fit_analysis(body: FitAnalysisRequest) -> FitAnalysisResult:
     if not body.results:
         raise HTTPException(422, "results list must not be empty")
     try:
-        return analyze_fit(body.results)
+        return analyze_fit(body.results, user_context=body.user_context)
     except Exception as exc:
         raise HTTPException(500, str(exc)) from exc
