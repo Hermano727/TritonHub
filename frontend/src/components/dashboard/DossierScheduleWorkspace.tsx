@@ -28,7 +28,7 @@ import { COMMITMENT_PRESETS } from "@/components/dashboard/commitmentPresets";
 import { WeeklyCalendar, type CourseBlock, type CommitmentBlock, COL_TO_DAY, parseDaysToCols, removeDayFromString, minutesToTimeStr, minutesToTimeInput } from "@/components/dashboard/WeeklyCalendar";
 import { useCalendarSyncHandler } from "@/components/layout/calendar-sync-context";
 import { useCalendarState } from "@/components/layout/calendar-state-context";
-import { useScheduleEditor, useScheduleFingerprint } from "@/hooks/useScheduleEditor";
+import { useScheduleEditor } from "@/hooks/useScheduleEditor";
 import type { ClassDossier, DossierEditPatch, ScheduleCommitment, ScheduleEvaluation, ScheduleItem, TransitionInsight, TransitProfile } from "@/types/dossier";
 
 function isDossierRemoteOnly(dossier: ClassDossier): boolean {
@@ -170,6 +170,7 @@ const PHASES: { id: WorkspacePhase; label: string; icon: typeof BarChart2; descr
 export type DossierScheduleWorkspaceHandle = {
   getCurrentClasses: () => ClassDossier[];
   getCurrentCommitments: () => ScheduleCommitment[];
+  isDirty: boolean;
 };
 
 type Props = {
@@ -214,19 +215,22 @@ export const DossierScheduleWorkspace = forwardRef(function DossierScheduleWorks
   }: Props,
   ref: React.Ref<DossierScheduleWorkspaceHandle | null>,
 ) {
-  const fingerprint = useScheduleFingerprint(viewClasses);
-  const fullKey = `${hydrateKey}|${fingerprint}`;
-
+  // hydrateKey (= "${activePlanId}:${authed}") is the sole trigger for re-hydration.
+  // We intentionally do NOT append a fingerprint here — viewClasses changes after a save
+  // (usePlanSync refreshes remotePlans) must NOT wipe the editor state.
+  // For v2 plans the workspace is unmounted during loading, so fresh-mount initialisation
+  // from useReducer's initialiser function handles the "data just arrived" case correctly.
   const {
-    classes, commitments, apply, undo, redo, resetToBaseline,
+    classes, commitments, courseLabels, apply, undo, redo, resetToBaseline,
     addCommitment, removeCommitment, editCommitment,
     canUndo, canRedo, isDirty,
-  } = useScheduleEditor(viewClasses, fullKey, initialCommitments);
+  } = useScheduleEditor(viewClasses, hydrateKey, initialCommitments);
 
   useImperativeHandle(ref, () => ({
     getCurrentClasses: () => classes,
     getCurrentCommitments: () => commitments,
-  }), [classes, commitments]);
+    isDirty,
+  }), [classes, commitments, isDirty]);
 
   /** Apply a user-supplied correction to a dossier field. Held in editor state until plan is saved. */
   const onUpdateDossier = useCallback((dossierId: string, patch: DossierEditPatch) => {
@@ -241,11 +245,18 @@ export const DossierScheduleWorkspace = forwardRef(function DossierScheduleWorks
           : {}),
       };
     });
-    apply({ classes: updatedClasses, commitments });
-  }, [apply, classes, commitments]);
+    apply({ classes: updatedClasses, commitments, courseLabels });
+  }, [apply, classes, commitments, courseLabels]);
 
   const [mainTab, setMainTab] = useState<MainTab>("dossier");
   const [currentPhase, setCurrentPhase] = useState<WorkspacePhase>("overview");
+
+  // Reset UI state whenever the active plan changes so switching plans
+  // always lands on Overview rather than whatever phase the previous plan was on.
+  useEffect(() => {
+    setCurrentPhase("overview");
+    setMainTab("dossier");
+  }, [hydrateKey]);
   const [fullscreenOpen, setFullscreenOpen] = useState(false);
   const [mapFullscreen, setMapFullscreen] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
@@ -253,6 +264,11 @@ export const DossierScheduleWorkspace = forwardRef(function DossierScheduleWorks
   const [selectedClassId, setSelectedClassId] = useState<string | null>(null);
   const [dashboardOpenIndex, setDashboardOpenIndex] = useState<number | null>(null);
   const formId = useId();
+
+  type PendingRename =
+    | { kind: "course"; labelKey: string; oldName: string; newName: string; otherCount: number }
+    | { kind: "commitment"; oldTitle: string; newName: string; otherCount: number };
+  const [pendingRename, setPendingRename] = useState<PendingRename | null>(null);
 
   // Add-block form state
   const [newTitle, setNewTitle] = useState("Work");
@@ -303,27 +319,59 @@ export const DossierScheduleWorkspace = forwardRef(function DossierScheduleWorks
   }, [reportCalendarVisible]);
 
   useEffect(() => {
-    if (!addOpen && !fullscreenOpen && !editingBlock) return;
+    if (!addOpen && !fullscreenOpen && !editingBlock && !pendingRename) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
       if (addOpen) setAddOpen(false);
       else if (editingBlock) setEditingBlock(null);
+      else if (pendingRename) setPendingRename(null);
       else setFullscreenOpen(false);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [addOpen, fullscreenOpen, editingBlock]);
+  }, [addOpen, fullscreenOpen, editingBlock, pendingRename]);
 
   const openAddModal = useCallback(() => { setBlockError(null); setAddOpen(true); }, []);
+
+  // "Just this one" for courses: apply the label override only to the single block that was edited.
+  const confirmRenameSingle = useCallback(() => {
+    if (!pendingRename || pendingRename.kind !== "course") { setPendingRename(null); return; }
+    const nextLabels = { ...courseLabels, [pendingRename.labelKey]: pendingRename.newName };
+    apply({ classes, commitments, courseLabels: nextLabels });
+    setPendingRename(null);
+  }, [pendingRename, courseLabels, apply, classes, commitments]);
+
+  // "Rename all": set the label override on every meeting entry that currently shows the old name.
+  const confirmRenameAll = useCallback(() => {
+    if (!pendingRename) return;
+    if (pendingRename.kind === "course") {
+      const nextLabels = { ...courseLabels };
+      for (const d of classes) {
+        d.meetings.forEach((_, idx) => {
+          const key = `${d.id}:${idx}`;
+          if ((courseLabels[key] ?? d.courseCode) === pendingRename.oldName) {
+            nextLabels[key] = pendingRename.newName;
+          }
+        });
+      }
+      apply({ classes, commitments, courseLabels: nextLabels });
+    } else {
+      const updated = commitments.map((c) =>
+        c.title === pendingRename.oldTitle ? { ...c, title: pendingRename.newName } : c
+      );
+      apply({ classes, commitments: updated, courseLabels });
+    }
+    setPendingRename(null);
+  }, [pendingRename, courseLabels, apply, classes, commitments]);
 
   const deleteMeeting = useCallback((block: CourseBlock) => {
     const updatedClasses = classes.map((d) => {
       if (d.id !== block.dossierId) return d;
       return { ...d, meetings: d.meetings.filter((_, idx) => idx !== block.meetingIdx) };
     });
-    apply({ classes: updatedClasses, commitments });
+    apply({ classes: updatedClasses, commitments, courseLabels });
     setEditingBlock(null);
-  }, [apply, classes, commitments]);
+  }, [apply, classes, commitments, courseLabels]);
 
   const openEditModal = useCallback((block: CourseBlock | CommitmentBlock) => {
     setEditError(null);
@@ -335,6 +383,7 @@ export const DossierScheduleWorkspace = forwardRef(function DossierScheduleWorks
       setEditEnd(minutesToTimeInput(c.endMin));
       setEditColor(c.color);
     } else {
+      setEditTitle(block.label);
       setEditDay(block.col);
       setEditStart(minutesToTimeInput(block.startMin));
       setEditEnd(minutesToTimeInput(block.endMin));
@@ -353,10 +402,24 @@ export const DossierScheduleWorkspace = forwardRef(function DossierScheduleWorks
     setEditError(null);
 
     if (editingBlock.kind === "commitment") {
-      editCommitment({ ...editingBlock.commitment, title: editTitle.trim() || "Untitled", dayCol: editDay, startMin: s, endMin: e, color: editColor });
+      const oldTitle = editingBlock.commitment.title;
+      const newTitle = editTitle.trim() || "Untitled";
+      editCommitment({ ...editingBlock.commitment, title: newTitle, dayCol: editDay, startMin: s, endMin: e, color: editColor });
+      if (newTitle !== oldTitle) {
+        const otherCount = commitments.filter(
+          (c) => c.id !== editingBlock.commitment.id && c.title === oldTitle
+        ).length;
+        if (otherCount > 0) setPendingRename({ kind: "commitment", oldTitle, newName: newTitle, otherCount });
+      }
     } else {
+      const labelKey = `${editingBlock.dossierId}:${editingBlock.meetingIdx}`;
+      const currentLabel = courseLabels[labelKey] ?? editingBlock.courseCode;
       const newDayToken = COL_TO_DAY[editDay];
-      const updatedClasses = classes.map((d) => {
+      const newLabel = editTitle.trim();
+      const labelChanged = !!newLabel && newLabel !== currentLabel;
+
+      // Build structural changes (time/day/location) only — never mutate ClassDossier.courseCode.
+      const updatedClassesStructural = classes.map((d) => {
         if (d.id !== editingBlock.dossierId) return d;
         const meetings = [...d.meetings];
         const orig = meetings[editingBlock.meetingIdx];
@@ -370,10 +433,31 @@ export const DossierScheduleWorkspace = forwardRef(function DossierScheduleWorks
         }
         return { ...d, meetings };
       });
-      apply({ classes: updatedClasses, commitments });
+
+      if (labelChanged) {
+        // Count all OTHER dossierId:meetingIdx entries whose current effective label matches.
+        const otherCount = classes.reduce((sum, d) => {
+          return sum + d.meetings.filter((_, idx) => {
+            if (d.id === editingBlock.dossierId && idx === editingBlock.meetingIdx) return false;
+            return (courseLabels[`${d.id}:${idx}`] ?? d.courseCode) === currentLabel;
+          }).length;
+        }, 0);
+
+        if (otherCount > 0) {
+          // Apply structural changes; defer label change to confirmation popup.
+          apply({ classes: updatedClassesStructural, commitments, courseLabels });
+          setPendingRename({ kind: "course", labelKey, oldName: currentLabel, newName: newLabel, otherCount });
+        } else {
+          // Only this entry has the label — apply override directly, no popup.
+          const nextLabels = { ...courseLabels, [labelKey]: newLabel };
+          apply({ classes: updatedClassesStructural, commitments, courseLabels: nextLabels });
+        }
+      } else {
+        apply({ classes: updatedClassesStructural, commitments, courseLabels });
+      }
     }
     setEditingBlock(null);
-  }, [editingBlock, editStart, editEnd, editTitle, editDay, editColor, editLocation, editCommitment, apply, classes, commitments]);
+  }, [editingBlock, editStart, editEnd, editTitle, editDay, editColor, editLocation, editCommitment, apply, classes, commitments, courseLabels]);
 
   const submitCommitment = useCallback(() => {
     const s = minutesFromTimeInput(newStart);
@@ -392,6 +476,14 @@ export const DossierScheduleWorkspace = forwardRef(function DossierScheduleWorks
     });
     setAddOpen(false);
   }, [addCommitment, newColor, newDay, newEnd, newStart, newTitle]);
+
+  // Preserves courseLabels when WeeklyCalendar drag-drop fires onApply with only classes+commitments.
+  const applyKeepingLabels = useCallback(
+    (next: { classes: ClassDossier[]; commitments: ScheduleCommitment[] }) => {
+      apply({ ...next, courseLabels });
+    },
+    [apply, courseLabels],
+  );
 
   const syncBtn = (size: "sm" | "lg") => (
     <button
@@ -435,7 +527,7 @@ export const DossierScheduleWorkspace = forwardRef(function DossierScheduleWorks
       {toolbar}
       <div className="lg:min-h-[min(520px,calc(100vh-14rem))]">
         <WeeklyCalendar
-          classes={classes} commitments={commitments} onApply={apply}
+          classes={classes} commitments={commitments} courseLabels={courseLabels} onApply={applyKeepingLabels}
           pxPerHour={px} headerActions={calHeader ?? undefined}
           hideScheduleHeading={calHeader === null} onBlockDoubleClick={openEditModal}
         />
@@ -676,9 +768,11 @@ export const DossierScheduleWorkspace = forwardRef(function DossierScheduleWorks
                 {toolbar}
                 <div className="mt-4">
                   <WeeklyCalendar
-                    classes={classes} commitments={commitments} onApply={apply}
+                    classes={classes} commitments={commitments} courseLabels={courseLabels} onApply={applyKeepingLabels}
                     pxPerHour={52} hideScheduleHeading
                     onBlockDoubleClick={openEditModal}
+                    onBlockClick={(id) => setSelectedClassId((prev) => prev === id ? null : id)}
+
                     highlightedDossierId={selectedClassId}
                   />
                 </div>
@@ -773,6 +867,7 @@ export const DossierScheduleWorkspace = forwardRef(function DossierScheduleWorks
                     scheduleItems={scheduleItems} transitionInsights={transitionInsights}
                     highlightedDossierId={selectedClassId} dossierMarkerMap={dossierMarkerMap}
                     mapHeight="h-[40vh]"
+                    onMarkerClick={(id) => setSelectedClassId(id)}
                   />
                 </motion.div>
               )}
@@ -780,10 +875,12 @@ export const DossierScheduleWorkspace = forwardRef(function DossierScheduleWorks
                 {toolbar}
                 <div className="mt-4">
                   <WeeklyCalendar
-                    classes={classes} commitments={commitments} onApply={apply}
+                    classes={classes} commitments={commitments} courseLabels={courseLabels} onApply={applyKeepingLabels}
                     pxPerHour={52} hideScheduleHeading={false}
                     headerActions={calendarHeaderActions ? <>{defaultCalendarActions}{calendarHeaderActions}</> : defaultCalendarActions}
                     onBlockDoubleClick={openEditModal}
+                    onBlockClick={(id) => setSelectedClassId((prev) => prev === id ? null : id)}
+
                     highlightedDossierId={selectedClassId}
                   />
                 </div>
@@ -857,7 +954,7 @@ export const DossierScheduleWorkspace = forwardRef(function DossierScheduleWorks
               {toolbar}
               <div className="min-h-0 flex-1 overflow-auto rounded-xl">
                 <WeeklyCalendar
-                  classes={classes} commitments={commitments} onApply={apply}
+                  classes={classes} commitments={commitments} courseLabels={courseLabels} onApply={applyKeepingLabels}
                   pxPerHour={96} hideScheduleHeading onBlockDoubleClick={openEditModal}
                 />
               </div>
@@ -906,6 +1003,68 @@ export const DossierScheduleWorkspace = forwardRef(function DossierScheduleWorks
           if (editingBlock?.kind === "course") deleteMeeting(editingBlock);
         }}
       />
+
+      {/* ── Rename-all confirmation ── */}
+      <AnimatePresence>
+        {pendingRename && (
+          <motion.div
+            key="rename-overlay"
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            transition={{ duration: 0.15 }}
+            className="fixed inset-0 z-[70] flex items-center justify-center bg-black/55 backdrop-blur-sm"
+            onClick={() => setPendingRename(null)}
+          >
+            <motion.div
+              initial={{ opacity: 0, scale: 0.96, y: 8 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.96 }}
+              transition={{ duration: 0.15 }}
+              className="w-full max-w-sm rounded-2xl border border-white/[0.10] bg-hub-surface-elevated p-5 shadow-2xl"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <p className="font-[family-name:var(--font-outfit)] text-sm font-semibold text-hub-text">
+                Rename other entries?
+              </p>
+              <p className="mt-2 text-xs leading-relaxed text-hub-text-muted">
+                {pendingRename.kind === "commitment" ? (
+                  <>
+                    This block was renamed from{" "}
+                    <span className="font-semibold text-hub-text">&ldquo;{pendingRename.oldTitle}&rdquo;</span>{" "}
+                    to{" "}
+                    <span className="font-semibold text-hub-text">&ldquo;{pendingRename.newName}&rdquo;</span>.{" "}
+                    <span className="font-semibold text-hub-text">{pendingRename.otherCount}</span>{" "}
+                    other block{pendingRename.otherCount === 1 ? "" : "s"} still {pendingRename.otherCount === 1 ? "has" : "have"} the old name.
+                  </>
+                ) : (
+                  <>
+                    <span className="font-semibold text-hub-text">{pendingRename.otherCount}</span>{" "}
+                    other calendar {pendingRename.otherCount === 1 ? "entry" : "entries"} will also be renamed from{" "}
+                    <span className="font-semibold text-hub-text">&ldquo;{pendingRename.oldName}&rdquo;</span>{" "}
+                    to{" "}
+                    <span className="font-semibold text-hub-text">&ldquo;{pendingRename.newName}&rdquo;</span>.
+                  </>
+                )}
+              </p>
+              <div className="mt-4 flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={pendingRename.kind === "course" ? confirmRenameSingle : () => setPendingRename(null)}
+                  className="rounded-lg px-3 py-1.5 text-xs font-medium text-white/50 transition hover:text-white/75"
+                >
+                  Just this one
+                </button>
+                <button
+                  type="button"
+                  onClick={confirmRenameAll}
+                  className="rounded-lg bg-hub-cyan px-3 py-1.5 text-xs font-semibold text-hub-bg transition hover:bg-hub-cyan/85"
+                >
+                  Rename all {pendingRename.otherCount + 1}
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* ── Course Dashboard Modal ── */}
       <DossierDashboardModal

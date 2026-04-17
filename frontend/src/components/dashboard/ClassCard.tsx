@@ -192,41 +192,6 @@ function EvidenceCard({ item }: { item: EvidenceItem }) {
   );
 }
 
-// ── Compact stacked bar for grade distribution in card view ──────────────────
-function SunsetGroupBar({ groups, sampleSize }: { groups: SunsetGroup[]; sampleSize: number }) {
-  if (!groups.length || !sampleSize) return null;
-  return (
-    <div className="space-y-1.5 rounded-lg border border-white/[0.06] bg-hub-bg/20 px-3 py-2.5">
-      <p className="text-[10px] font-semibold uppercase tracking-wide text-white/40">
-        Grade distribution
-      </p>
-      {/* Stacked bar */}
-      <div className="flex h-3 w-full overflow-hidden rounded-full">
-        {groups.map((g) => (
-          <div
-            key={g.label}
-            style={{ width: `${g.percent}%`, backgroundColor: g.color }}
-            title={`${g.label}: ${Math.round(g.percent)}%`}
-          />
-        ))}
-      </div>
-      {/* Labels */}
-      <div className="flex items-center gap-3 flex-wrap">
-        {groups.map((g) => (
-          <span key={g.label} className="flex items-center gap-1 text-[10px] text-white/60">
-            <span
-              className="h-1.5 w-1.5 shrink-0 rounded-full"
-              style={{ backgroundColor: g.color }}
-            />
-            <span className="font-semibold" style={{ color: g.color }}>{g.label}</span>
-            <span>{Math.round(g.percent)}%</span>
-          </span>
-        ))}
-        <span className="ml-auto text-[9px] text-white/30">{sampleSize} students</span>
-      </div>
-    </div>
-  );
-}
 
 // ── Grade breakdown strip ──────────────────────────────────────────────────────
 function GradeBreakdownStrip({ breakdown }: { breakdown: string | null | undefined }) {
@@ -290,7 +255,24 @@ function InlineQuote({ item }: { item: EvidenceItem }) {
   );
 }
 
-// ── SVG mini histogram for grade distribution ─────────────────────────────────
+// ── Fixed 4-group grade preview for card view ─────────────────────────────────
+// Always renders exactly A / B / C / D·F — fixed viewBox so every card is identical.
+const CARD_GRADE_GROUPS = [
+  { label: "A",   grades: ["A+","A","A-"],        color: "#21c1df" },
+  { label: "B",   grades: ["B+","B","B-"],        color: "#4f8dfd" },
+  { label: "C",   grades: ["C+","C","C-"],        color: "#a78bfa" },
+  { label: "D/F", grades: ["D+","D","D-","F"],    color: "#ff5578" },
+] as const;
+
+// Fixed SVG dimensions — always identical regardless of data
+const CG_BAR_W = 38;
+const CG_GAP   = 10;
+const CG_BAR_H = 56;
+const CG_LABEL_H = 14;
+const CG_PCT_H   = 13;
+const CG_SVG_W = CARD_GRADE_GROUPS.length * (CG_BAR_W + CG_GAP) - CG_GAP; // 194
+const CG_SVG_H = CG_PCT_H + CG_BAR_H + CG_LABEL_H;                        // 83
+
 function GradeHistogram({
   gradeCounts,
   sampleSize,
@@ -298,78 +280,73 @@ function GradeHistogram({
   gradeCounts: Record<string, number>;
   sampleSize: number;
 }) {
-  const ORDER = [
-    "A+","A","A-","B+","B","B-","C+","C","C-","D+","D","D-","F","P","NP","S","U","W","EW","I",
-  ];
-  const segments = ORDER.map((grade) => ({
-    grade,
-    count: gradeCounts[grade] ?? 0,
-    color: SUNSET_SEGMENT_COLORS[grade] ?? "#64748b",
-  })).filter((s) => s.count > 0);
+  if (!sampleSize) return null;
 
-  if (segments.length === 0) return null;
+  const groups = CARD_GRADE_GROUPS.map((g) => {
+    const count = g.grades.reduce((s, gr) => s + (gradeCounts[gr] ?? 0), 0);
+    return { label: g.label, color: g.color, count, pct: (count / sampleSize) * 100 };
+  });
 
-  const maxCount = Math.max(...segments.map((s) => s.count));
-  const BAR_H = 110;
-  const BAR_W = 20;
-  const GAP = 5;
-  const PCT_LABEL_H = 14;  // space above bar for % label
-  const GRADE_LABEL_H = 16; // space below bar for grade label
-  const svgW = segments.length * (BAR_W + GAP) - GAP;
-  const svgH = PCT_LABEL_H + BAR_H + GRADE_LABEL_H;
+  const maxPct = Math.max(...groups.map((g) => g.pct), 1);
+  const hasAny = groups.some((g) => g.count > 0);
+  if (!hasAny) return null;
 
   return (
-    <svg
-      viewBox={`0 0 ${svgW} ${svgH}`}
-      className="w-full"
-      aria-label="Grade distribution histogram"
-    >
-      {segments.map((seg, i) => {
-        const barH = Math.max((seg.count / maxCount) * BAR_H, 3);
-        const x = i * (BAR_W + GAP);
-        const barY = PCT_LABEL_H + (BAR_H - barH);
-        const pct = Math.round((seg.count / sampleSize) * 100);
-        return (
-          <g key={seg.grade}>
-            {/* Percentage label above bar — only show if ≥5% to avoid clutter */}
-            {pct >= 5 && (
-              <text
-                x={x + BAR_W / 2}
-                y={barY - 3}
-                textAnchor="middle"
-                fontSize={7}
-                fontWeight={600}
-                fill={seg.color}
-                fillOpacity={0.9}
+    <div className="rounded-lg border border-white/[0.06] bg-hub-bg/20 px-3 py-2.5">
+      <div className="flex items-center justify-between mb-1.5">
+        <p className="text-[10px] font-semibold uppercase tracking-wide text-white/40">
+          Grade distribution
+        </p>
+        <span className="text-[9px] text-white/30">{sampleSize} students</span>
+      </div>
+      <svg
+        viewBox={`0 0 ${CG_SVG_W} ${CG_SVG_H}`}
+        width={CG_SVG_W}
+        height={CG_SVG_H}
+        aria-label="Grade distribution preview"
+        className="block"
+      >
+        {groups.map((g, i) => {
+          const barH = Math.max((g.pct / maxPct) * CG_BAR_H, g.count > 0 ? 3 : 0);
+          const x = i * (CG_BAR_W + CG_GAP);
+          const barY = CG_PCT_H + (CG_BAR_H - barH);
+          const pctLabel = g.pct >= 1 ? `${Math.round(g.pct)}%` : "";
+          return (
+            <g key={g.label}>
+              {pctLabel && (
+                <text
+                  x={x + CG_BAR_W / 2}
+                  y={barY - 3}
+                  textAnchor="middle"
+                  fontSize={7}
+                  fontWeight={700}
+                  fill={g.color}
+                  fillOpacity={0.9}
+                >
+                  {pctLabel}
+                </text>
+              )}
+              <rect
+                x={x} y={barY}
+                width={CG_BAR_W} height={barH}
+                fill={g.color} fillOpacity={0.8} rx={3}
               >
-                {pct}%
+                <title>{g.label}: {Math.round(g.pct)}% ({g.count} students)</title>
+              </rect>
+              <text
+                x={x + CG_BAR_W / 2}
+                y={CG_SVG_H - 2}
+                textAnchor="middle"
+                fontSize={8}
+                fill="rgba(148,163,184,0.85)"
+              >
+                {g.label}
               </text>
-            )}
-            <rect
-              x={x}
-              y={barY}
-              width={BAR_W}
-              height={barH}
-              fill={seg.color}
-              fillOpacity={0.85}
-              rx={3}
-            >
-              <title>{seg.grade}: {pct}% ({seg.count} students)</title>
-            </rect>
-            {/* Grade label below bar */}
-            <text
-              x={x + BAR_W / 2}
-              y={svgH - 3}
-              textAnchor="middle"
-              fontSize={8}
-              fill="rgba(148,163,184,0.9)"
-            >
-              {seg.grade}
-            </text>
-          </g>
-        );
-      })}
-    </svg>
+            </g>
+          );
+        })}
+      </svg>
+    </div>
   );
 }
 
@@ -393,14 +370,6 @@ export function ClassCard({
       (sum, count) => sum + count,
       0,
     );
-  const sunsetPrimaryGroups = getPrimarySunsetGroups(
-    sunsetSummary?.grade_counts ?? {},
-    sunsetSampleSize,
-  );
-  const sunsetSegments = getSunsetSegments(
-    sunsetSummary?.grade_counts ?? {},
-    sunsetSampleSize,
-  );
   const hasSunsetSummary =
     sunsetSummary?.average_gpa != null ||
     sunsetSummary?.sample_size != null ||
@@ -566,9 +535,9 @@ export function ClassCard({
             </div>
           )}
 
-          {/* Sunset grade distribution bar */}
-          {sunsetPrimaryGroups.length > 0 && (
-            <SunsetGroupBar groups={sunsetPrimaryGroups} sampleSize={sunsetSampleSize} />
+          {/* Grade distribution histogram */}
+          {sunsetSampleSize > 0 && Object.keys(sunsetSummary?.grade_counts ?? {}).length > 0 && (
+            <GradeHistogram gradeCounts={sunsetSummary?.grade_counts ?? {}} sampleSize={sunsetSampleSize} />
           )}
 
           {/* Grade breakdown / course logistics strip */}
@@ -639,31 +608,6 @@ function sanitizeDashes(input: string) {
   return input.replace(/[–—]|--/g, ":");
 }
 
-type SunsetGroup = {
-  label: string;
-  color: string;
-  percent: number;
-  breakdown: string[];
-};
-
-type SunsetSegment = {
-  grade: string;
-  count: number;
-  percent: number;
-  color: string;
-};
-
-const SUNSET_GROUPS: Array<{
-  label: string;
-  grades: string[];
-  color: string;
-}> = [
-  { label: "A", grades: ["A+", "A", "A-"], color: "#26c6da" },
-  { label: "B", grades: ["B+", "B", "B-"], color: "#4f8dfd" },
-  { label: "C", grades: ["C+", "C", "C-"], color: "#8b5cf6" },
-  { label: "D/F", grades: ["D+", "D", "D-", "F"], color: "#ff4d73" },
-];
-
 const SUNSET_SEGMENT_COLORS: Record<string, string> = {
   "A+": "#21c1df",
   "A": "#20b6d9",
@@ -686,65 +630,3 @@ const SUNSET_SEGMENT_COLORS: Record<string, string> = {
   "EW": "#475569",
   "I": "#334155",
 };
-
-function formatPercent(percent: number) {
-  if (percent >= 10) return `${Math.round(percent)}%`;
-  if (percent >= 1) return `${percent.toFixed(1).replace(/\.0$/, "")}%`;
-  return `${percent.toFixed(1)}%`;
-}
-
-function getPrimarySunsetGroups(
-  gradeCounts: Record<string, number>,
-  sampleSize: number,
-): SunsetGroup[] {
-  if (!sampleSize) return [];
-
-  return SUNSET_GROUPS.map((group) => {
-    const breakdown = group.grades
-      .filter((grade) => (gradeCounts[grade] ?? 0) > 0)
-      .map(
-        (grade) =>
-          `${grade}: ${formatPercent(
-            ((gradeCounts[grade] ?? 0) / sampleSize) * 100,
-          )}`,
-      );
-
-    const total = group.grades.reduce(
-      (sum, grade) => sum + (gradeCounts[grade] ?? 0),
-      0,
-    );
-
-    return {
-      label: group.label,
-      color: group.color,
-      percent: (total / sampleSize) * 100,
-      breakdown,
-    };
-  }).filter((group) => group.percent > 0);
-}
-
-function getSunsetSegments(
-  gradeCounts: Record<string, number>,
-  sampleSize: number,
-): SunsetSegment[] {
-  if (!sampleSize) return [];
-
-  return Object.entries(gradeCounts)
-    .filter(([, count]) => count > 0)
-    .map(([grade, count]) => ({
-      grade,
-      count,
-      percent: (count / sampleSize) * 100,
-      color: SUNSET_SEGMENT_COLORS[grade] ?? "#64748b",
-    }))
-    .sort((a, b) => gradeSortIndex(a.grade) - gradeSortIndex(b.grade));
-}
-
-function gradeSortIndex(grade: string) {
-  const order = [
-    "A+","A","A-","B+","B","B-","C+","C","C-",
-    "D+","D","D-","F","P","NP","S","U","W","EW","I",
-  ];
-  const index = order.indexOf(grade);
-  return index === -1 ? order.length : index;
-}

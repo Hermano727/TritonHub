@@ -267,6 +267,9 @@ export function CommandCenter() {
     setEvaluation(mockDossier.evaluation);
   }, [clearRun]);
 
+  // Plan-switch guard: ID of the plan the user wants to switch to (pending confirmation)
+  const [pendingSwitchId, setPendingSwitchId] = useState<string | null>(null);
+
   const {
     authed,
     isUcsdUser,
@@ -279,6 +282,7 @@ export function CommandCenter() {
     viewClasses,
     viewEvaluation,
     viewCommitments,
+    isPlanLoading,
     handleSave,
     handleNewPlan,
     handleDeletePlan,
@@ -290,6 +294,21 @@ export function CommandCenter() {
     workspaceRef,
     onPlanCreated: resetDemo,
   });
+
+  const switchToPlan = useCallback((id: string) => {
+    setActivePlanId(id);
+    setPhase("dashboard");
+  }, [setActivePlanId]);
+
+  const handleSelectPlan = useCallback((id: string) => {
+    if (id === activePlanId) return;
+    const dirty = workspaceRef.current?.isDirty ?? false;
+    if (dirty && phase === "dashboard") {
+      setPendingSwitchId(id);
+    } else {
+      switchToPlan(id);
+    }
+  }, [activePlanId, phase, switchToPlan, workspaceRef]);
 
   const runIngestionFlow = useCallback(
     async (imageFile: File | undefined) => {
@@ -404,6 +423,24 @@ export function CommandCenter() {
     }
   }, [handleSave, briefingData]);
 
+  const handleSaveAndSwitch = useCallback(async () => {
+    if (!pendingSwitchId) return;
+    const targetId = pendingSwitchId;
+    setPendingSwitchId(null);
+    setIsSaving(true);
+    setSaveError(null);
+    try {
+      await handleSave(briefingData?.scheduleTitle);
+      setLastSavedAt(new Date());
+      setShowSavePrompt(false);
+    } catch {
+      // Save failed — still switch, since the user chose "save & switch"
+    } finally {
+      setIsSaving(false);
+    }
+    switchToPlan(targetId);
+  }, [pendingSwitchId, handleSave, briefingData, switchToPlan]);
+
   const handleBriefingSubmit = useCallback((data: ScheduleBriefing) => {
     briefingDataRef.current = data;
     setBriefingData(data);
@@ -445,7 +482,7 @@ export function CommandCenter() {
           planSectionTitle={authed ? "Saved plans" : "My Quarters"}
           plans={sidebarPlans}
           activePlanId={activePlanId}
-          onSelectPlan={(id) => { setActivePlanId(id); setPhase("dashboard"); }}
+          onSelectPlan={handleSelectPlan}
           newPlanLabel={authed ? "New saved plan" : "New quarter research"}
           onNewPlan={authed ? handleNewPlan : undefined}
           onDeletePlan={authed ? handleDeletePlan : undefined}
@@ -582,7 +619,23 @@ export function CommandCenter() {
                   transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
                   className="space-y-4"
                 >
-                  {viewClasses.length === 0 ? (
+                  {isPlanLoading ? (
+                    <motion.div
+                      key="plan-loading"
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      exit={{ opacity: 0 }}
+                      transition={{ duration: 0.2 }}
+                      className="flex flex-col items-center justify-center gap-4 rounded-2xl border border-white/[0.06] bg-hub-surface/60 py-24"
+                    >
+                      <div className="relative h-8 w-8">
+                        <div className="absolute inset-0 animate-spin rounded-full border-2 border-white/[0.08] border-t-hub-cyan/70" />
+                      </div>
+                      <p className="font-[family-name:var(--font-outfit)] text-sm text-hub-text-muted">
+                        Loading plan…
+                      </p>
+                    </motion.div>
+                  ) : viewClasses.length === 0 ? (
                     <p className="rounded-xl border border-white/[0.08] bg-hub-bg/40 px-4 py-8 text-center text-sm text-hub-text-muted">
                       No schedule data for this plan yet. Upload your schedule above or select another saved plan.
                     </p>
@@ -619,6 +672,67 @@ export function CommandCenter() {
         onSkip={handleBriefingSkip}
         researchDone={briefingResearchDone}
       />
+
+      {/* ── Unsaved-changes guard modal ── */}
+      <AnimatePresence>
+        {pendingSwitchId && (
+          <motion.div
+            key="switch-guard"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.15 }}
+            className="fixed inset-0 z-[80] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
+            onClick={() => setPendingSwitchId(null)}
+          >
+            <motion.div
+              initial={{ opacity: 0, scale: 0.96, y: 8 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.96 }}
+              transition={{ duration: 0.15 }}
+              className="w-full max-w-sm rounded-2xl border border-white/[0.10] bg-hub-surface-elevated p-6 shadow-2xl"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <p className="font-[family-name:var(--font-outfit)] text-base font-semibold text-hub-text">
+                Unsaved changes
+              </p>
+              <p className="mt-2 text-sm leading-relaxed text-hub-text-muted">
+                You have unsaved edits to this plan. What would you like to do before switching?
+              </p>
+              <div className="mt-5 flex flex-col gap-2">
+                {authed && (
+                  <button
+                    type="button"
+                    onClick={() => void handleSaveAndSwitch()}
+                    disabled={isSaving}
+                    className="w-full rounded-xl bg-hub-cyan px-4 py-2.5 text-sm font-semibold text-hub-bg transition hover:bg-hub-cyan/85 disabled:opacity-50"
+                  >
+                    {isSaving ? "Saving…" : "Save & switch"}
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => {
+                    const id = pendingSwitchId;
+                    setPendingSwitchId(null);
+                    switchToPlan(id);
+                  }}
+                  className="w-full rounded-xl border border-white/[0.10] px-4 py-2.5 text-sm font-medium text-hub-text-secondary transition hover:bg-white/[0.04] hover:text-hub-text"
+                >
+                  Discard changes &amp; switch
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPendingSwitchId(null)}
+                  className="w-full px-4 py-2 text-sm font-medium text-hub-text-muted transition hover:text-hub-text"
+                >
+                  Cancel
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

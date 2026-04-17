@@ -64,6 +64,8 @@ type UsePlanSyncReturn = {
   viewClasses: ClassDossier[];
   viewEvaluation: ScheduleEvaluation;
   viewCommitments: ScheduleCommitment[];
+  /** True while a v2 plan is being fetched from the server. Use to show a loading state instead of stale data. */
+  isPlanLoading: boolean;
   persistCompletedSession: (payload: SavedPlanPayloadV1) => Promise<void>;
   handleSave: (titleOverride?: string) => Promise<void>;
   handleSaveOverwrite: () => Promise<void>;
@@ -133,6 +135,7 @@ export function usePlanSync({
   const [expandedClasses, setExpandedClasses] = useState<ClassDossier[] | null>(null);
   const [expandedEvaluation, setExpandedEvaluation] = useState<ScheduleEvaluation | null>(null);
   const [expandedCommitments, setExpandedCommitments] = useState<ScheduleCommitment[] | null>(null);
+  const [isPlanLoading, setIsPlanLoading] = useState(false);
 
   const activePlanIdRef = useRef(activePlanId);
   const remotePlansRef = useRef(remotePlans);
@@ -187,22 +190,34 @@ export function usePlanSync({
     void loadHubData();
   }, [loadHubData]);
 
-  // When the active plan changes and it's a v2 plan, expand it server-side
+  // Expand the active plan when it changes.
+  // IMPORTANT: remotePlans is intentionally NOT in the deps array.
+  //   - Including it would cause this effect to re-run whenever loadHubData() refreshes
+  //     the plan list (e.g. after every save), triggering a spurious loading screen and
+  //     wiping the editor state.
+  //   - We use remotePlansRef.current inside the effect so we always see the latest
+  //     plan metadata without creating a dep-cycle.
   useEffect(() => {
+    // Immediately clear stale data from the previous plan so it never bleeds through.
+    setExpandedClasses(null);
+    setExpandedEvaluation(null);
+    setExpandedCommitments(null);
+
     if (!authed || !activePlanId) {
-      setExpandedClasses(null);
-      setExpandedEvaluation(null);
-      setExpandedCommitments(null);
-      return;
-    }
-    const plan = remotePlans.find((p) => p.id === activePlanId);
-    if (!plan || (plan.payload_version ?? 1) < 2) {
-      setExpandedClasses(null);
-      setExpandedEvaluation(null);
-      setExpandedCommitments(null);
+      setIsPlanLoading(false);
       return;
     }
 
+    // Use the ref — safe because React renders and commits refs before effects fire.
+    const plan = remotePlansRef.current.find((p) => p.id === activePlanId);
+    if (!plan || (plan.payload_version ?? 1) < 2) {
+      // v1 plan or unknown — payload is already in remotePlans, no server fetch needed.
+      setIsPlanLoading(false);
+      return;
+    }
+
+    // v2 plan — must fetch full dossiers from server.
+    setIsPlanLoading(true);
     let cancelled = false;
     void (async () => {
       const supabase = createClient();
@@ -215,9 +230,11 @@ export function usePlanSync({
         setExpandedEvaluation(expanded.evaluation);
         setExpandedCommitments(expanded.commitments);
       }
+      setIsPlanLoading(false);
     })();
     return () => { cancelled = true; };
-  }, [authed, activePlanId, remotePlans]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authed, activePlanId]); // remotePlans deliberately excluded — see comment above
 
   const quarterLabel = useMemo(() => {
     if (!authed) {
@@ -294,9 +311,14 @@ export function usePlanSync({
   }, [authed, remoteVault, activePlanId]);
 
   const { viewClasses, viewEvaluation, viewCommitments } = useMemo(() => {
+    const empty = { viewClasses: [] as ClassDossier[], viewEvaluation: evaluation, viewCommitments: [] as ScheduleCommitment[] };
+
     if (phase !== "dashboard" || !authed) {
       return { viewClasses: classes, viewEvaluation: evaluation, viewCommitments: [] as ScheduleCommitment[] };
     }
+
+    // While a plan is loading, return nothing so stale data from a previous plan never shows.
+    if (isPlanLoading) return empty;
 
     // v2 plan — use server-expanded data if available
     if (expandedClasses !== null) {
@@ -320,7 +342,7 @@ export function usePlanSync({
       }
     }
     return { viewClasses: classes, viewEvaluation: evaluation, viewCommitments: [] as ScheduleCommitment[] };
-  }, [phase, authed, activePlanId, remotePlans, classes, evaluation, expandedClasses, expandedEvaluation, expandedCommitments]);
+  }, [phase, authed, activePlanId, remotePlans, classes, evaluation, expandedClasses, expandedEvaluation, expandedCommitments, isPlanLoading]);
 
   // ---------------------------------------------------------------------------
   // Persist helpers
@@ -505,6 +527,7 @@ export function usePlanSync({
     viewClasses,
     viewEvaluation,
     viewCommitments,
+    isPlanLoading,
     persistCompletedSession,
     handleSave,
     handleSaveOverwrite,

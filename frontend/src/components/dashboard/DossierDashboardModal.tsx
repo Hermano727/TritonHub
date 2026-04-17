@@ -96,44 +96,64 @@ const GRADE_GROUPS = [
   { label: "D/F", grades: ["D+","D","D-","F"], color: "#ff4d73" },
 ];
 
+// Fixed-width histogram: always renders every GRADE_ORDER slot so width never changes.
+const MH_BAR_W = 22;
+const MH_GAP   = 4;
+const MH_BAR_H = 80;
+const MH_LABEL_H = 14;
+const MH_SVG_W = GRADE_ORDER.length * (MH_BAR_W + MH_GAP) - MH_GAP;
+const MH_SVG_H = MH_BAR_H + MH_LABEL_H + 4;
+
 function GradeHistogram({ gradeCounts, sampleSize }: { gradeCounts: Record<string, number>; sampleSize: number }) {
   const reduce = useReducedMotion();
-  const segs = GRADE_ORDER
-    .map((g) => ({ grade: g, count: gradeCounts[g] ?? 0, color: GRADE_COLORS[g] ?? "#64748b" }))
-    .filter((s) => s.count > 0);
-  if (segs.length === 0) return null;
+  const segs = GRADE_ORDER.map((g) => ({
+    grade: g,
+    count: gradeCounts[g] ?? 0,
+    color: GRADE_COLORS[g] ?? "#64748b",
+  }));
 
-  const maxCount = Math.max(...segs.map((s) => s.count));
-  const BAR_W = 22;
-  const GAP = 4;
-  const BAR_H = 80;
-  const LABEL_H = 14;
-  const svgW = segs.length * (BAR_W + GAP) - GAP;
-  const svgH = BAR_H + LABEL_H + 4;
+  const maxCount = Math.max(...segs.map((s) => s.count), 1);
+  const hasAny = segs.some((s) => s.count > 0);
+  if (!hasAny) return null;
 
   return (
-    <svg viewBox={`0 0 ${svgW} ${svgH}`} className="w-full" aria-label="Grade distribution histogram">
+    <svg
+      viewBox={`0 0 ${MH_SVG_W} ${MH_SVG_H}`}
+      width={MH_SVG_W}
+      height={MH_SVG_H}
+      aria-label="Grade distribution histogram"
+      className="block w-full max-w-full"
+    >
       {segs.map((seg, i) => {
-        const barH = Math.max((seg.count / maxCount) * BAR_H, 3);
-        const x = i * (BAR_W + GAP);
-        const barY = BAR_H - barH;
+        const barH = seg.count > 0 ? Math.max((seg.count / maxCount) * MH_BAR_H, 3) : 0;
+        const x = i * (MH_BAR_W + MH_GAP);
+        const barY = MH_BAR_H - barH;
         const pct = Math.round((seg.count / sampleSize) * 100);
         return (
           <g key={seg.grade}>
-            <motion.rect
-              x={x}
-              width={BAR_W}
-              fill={seg.color}
-              fillOpacity={0.8}
-              rx={3}
-              initial={reduce ? undefined : { height: 0, y: BAR_H }}
-              animate={{ height: barH, y: barY }}
-              transition={{ duration: 0.55, ease: [0.22, 1, 0.36, 1], delay: 0.1 + i * 0.025 }}
+            {seg.count > 0 && (
+              <motion.rect
+                x={x}
+                width={MH_BAR_W}
+                fill={seg.color}
+                fillOpacity={0.8}
+                rx={3}
+                initial={reduce ? undefined : { height: 0, y: MH_BAR_H }}
+                animate={{ height: barH, y: barY }}
+                transition={{ duration: 0.55, ease: [0.22, 1, 0.36, 1], delay: 0.1 + i * 0.025 }}
+              >
+                <title>{seg.grade}: {pct}% ({seg.count} students)</title>
+              </motion.rect>
+            )}
+            <text
+              x={x + MH_BAR_W / 2}
+              y={MH_SVG_H - 2}
+              textAnchor="middle"
+              fontSize={8}
+              fill={seg.count > 0 ? "rgba(148,163,184,0.85)" : "rgba(148,163,184,0.25)"}
             >
-              <title>{seg.grade}: {pct}% ({seg.count} students)</title>
-            </motion.rect>
-            <text x={x + BAR_W / 2} y={svgH - 2} textAnchor="middle"
-              fontSize={8} fill="rgba(148,163,184,0.85)">{seg.grade}</text>
+              {seg.grade}
+            </text>
           </g>
         );
       })}
