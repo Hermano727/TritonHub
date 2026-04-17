@@ -68,13 +68,23 @@ export function EditBlockModal({
             </div>
 
             <div className="mt-5 space-y-4">
-              {block.kind === "commitment" && (
+              {block.kind === "commitment" ? (
                 <label className="block">
                   <span className="text-[11px] font-medium uppercase tracking-wide text-hub-text-muted">Title</span>
                   <input
                     value={title}
                     onChange={(e) => onTitleChange(e.target.value)}
                     className="mt-1.5 w-full rounded-lg border border-white/[0.1] bg-hub-bg/60 px-3 py-2 text-sm text-hub-text outline-none ring-hub-cyan/30 placeholder:text-hub-text-muted focus:ring-2"
+                  />
+                </label>
+              ) : (
+                <label className="block">
+                  <span className="text-[11px] font-medium uppercase tracking-wide text-hub-text-muted">Label</span>
+                  <input
+                    value={title}
+                    onChange={(e) => onTitleChange(e.target.value)}
+                    className="mt-1.5 w-full rounded-lg border border-white/[0.1] bg-hub-bg/60 px-3 py-2 text-sm text-hub-text outline-none ring-hub-cyan/30 placeholder:text-hub-text-muted focus:ring-2"
+                    placeholder="e.g. CSE 120"
                   />
                 </label>
               )}
@@ -86,7 +96,7 @@ export function EditBlockModal({
                   onChange={(e) => onDayChange(Number(e.target.value))}
                   className="mt-1.5 w-full rounded-lg border border-white/[0.1] bg-hub-bg/60 px-3 py-2 text-sm text-hub-text outline-none focus:ring-2 focus:ring-hub-cyan/30"
                 >
-                  {["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"].map((d, i) => (
+                  {["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"].map((d, i) => (
                     <option key={d} value={i}>{d}</option>
                   ))}
                 </select>

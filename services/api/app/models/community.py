@@ -10,10 +10,13 @@ class CreatePostRequest(CamelModel):
     course_code: Optional[str] = None
     professor_name: Optional[str] = None
     is_anonymous: bool = False
+    general_tags: list[str] = Field(default_factory=list)
 
 
 class CreateReplyRequest(CamelModel):
     body: str
+    parent_reply_id: Optional[str] = None
+    is_anonymous: bool = False
 
 
 class PostSummary(CamelModel):
@@ -24,12 +27,15 @@ class PostSummary(CamelModel):
     course_code: Optional[str] = None
     professor_name: Optional[str] = None
     is_anonymous: bool = False
+    general_tags: list[str] = Field(default_factory=list)
     author_display_name: str
     created_at: str
     updated_at: str
     reply_count: int = 0
     upvote_count: int = 0
+    downvote_count: int = 0
     user_has_upvoted: bool = False
+    user_has_downvoted: bool = False
 
 
 class ReplyOut(CamelModel):
@@ -37,9 +43,15 @@ class ReplyOut(CamelModel):
     post_id: str
     user_id: str
     body: str
+    parent_reply_id: Optional[str] = None
+    is_anonymous: bool = False
     author_display_name: str
     created_at: str
     updated_at: str
+    upvote_count: int = 0
+    downvote_count: int = 0
+    user_has_upvoted: bool = False
+    user_has_downvoted: bool = False
 
 
 class PostDetail(PostSummary):
@@ -54,8 +66,15 @@ class PostListResponse(CamelModel):
 
 
 class UpvoteResponse(CamelModel):
+    """Kept for backward compatibility."""
     upvoted: bool
     upvote_count: int
+
+
+class VoteResponse(CamelModel):
+    voted: bool
+    upvote_count: int
+    downvote_count: int
 
 
 class NotificationOut(CamelModel):

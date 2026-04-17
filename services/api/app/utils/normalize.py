@@ -9,6 +9,7 @@ and DB lookups are always identical.
 from __future__ import annotations
 
 import hashlib
+import re
 
 
 def normalize_course_code(course_code: str) -> str:
@@ -25,6 +26,29 @@ def normalize_professor_name(professor_name: str | None) -> str:
     Accepts None → returns ''.
     """
     return " ".join((professor_name or "").upper().split())
+
+
+def normalize_professor_name_loose(professor_name: str | None) -> str:
+    """
+    Like normalize_professor_name but strips trailing middle initials.
+
+    This bridges the gap between names stored from sunset_grade_distributions
+    (e.g. 'CHIN, BRYAN W.') and names parsed from WebReg screenshots by Gemini
+    (e.g. 'Chin, Bryan' — no middle initial).
+
+    'CHIN, BRYAN W.'        → 'CHIN, BRYAN'
+    'COTTRELL, GARRISON W'  → 'COTTRELL, GARRISON'
+    'POLITZ, JOSEPH GIBBS'  → 'POLITZ, JOSEPH GIBBS'  (GIBBS is not an initial)
+    'HUANG, RUANQIANQIAN (LISA)' → 'HUANG, RUANQIANQIAN (LISA)'  (no change)
+    'Bryan Chin'            → 'BRYAN CHIN'  (no comma format, no change)
+    """
+    normalized = normalize_professor_name(professor_name)
+    if "," in normalized:
+        last, rest = normalized.split(",", 1)
+        # Strip one or more trailing single-letter words (with optional period)
+        rest = re.sub(r"(\s+[A-Z]\.?)+$", "", rest.rstrip())
+        normalized = f"{last},{rest}" if rest.strip() else last.strip()
+    return normalized
 
 
 def compute_schedule_signature(entries: list[tuple[str, str | None]]) -> str:

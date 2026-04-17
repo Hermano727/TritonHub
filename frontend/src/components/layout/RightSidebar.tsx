@@ -1,11 +1,14 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 import Link from "next/link";
 import {
   BookmarkCheck,
+  Check,
   FileText,
   FolderOpen,
+  Home,
+  MoreHorizontal,
   Plus,
   Settings,
   Trash,
@@ -18,7 +21,31 @@ export type SidebarPlanRow = {
   id: string;
   label: string;
   subtitle?: string;
+  courseCount?: number;
+  trendLabel?: string;
+  fitnessScore?: number;
+  fitnessMax?: number;
+  updatedAt?: string;
 };
+
+function relativeTime(iso: string): string {
+  const diff = Date.now() - new Date(iso).getTime();
+  const mins = Math.floor(diff / 60_000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  const days = Math.floor(hrs / 24);
+  if (days < 7) return `${days}d ago`;
+  return new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
+function trendColor(score: number | undefined): string {
+  if (score == null) return "text-hub-text-muted";
+  if (score >= 75) return "text-hub-success";
+  if (score >= 50) return "text-hub-gold";
+  return "text-hub-danger";
+}
 
 type RightSidebarProps = {
   planSectionTitle: string;
@@ -28,6 +55,7 @@ type RightSidebarProps = {
   newPlanLabel: string;
   onNewPlan?: () => void;
   onDeletePlan?: (id: string) => void;
+  onRenamePlan?: (id: string, newTitle: string) => void;
   vaultItems: VaultItem[];
   vaultSynced: boolean;
 };
@@ -77,46 +105,50 @@ export function RightSidebar({
   newPlanLabel,
   onNewPlan,
   onDeletePlan,
+  onRenamePlan,
   vaultItems,
   vaultSynced,
 }: RightSidebarProps) {
   const [activePanel, setActivePanel] = useState<ActivePanel | null>(null);
   // Tracks the last opened panel so content stays visible during slide-out
   const [shownPanel, setShownPanel] = useState<ActivePanel>("plans");
+  // 3-dot menu state
+  const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
+  const [renamingId, setRenamingId] = useState<string | null>(null);
+  const [renameValue, setRenameValue] = useState("");
   const railRef = useRef<HTMLElement>(null);
   const flyoutRef = useRef<HTMLDivElement>(null);
+  const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  function togglePanel(panel: ActivePanel) {
-    if (activePanel === panel) {
-      setActivePanel(null);
-    } else {
-      setShownPanel(panel);
-      setActivePanel(panel);
+  const cancelClose = useCallback(() => {
+    if (closeTimerRef.current) {
+      clearTimeout(closeTimerRef.current);
+      closeTimerRef.current = null;
     }
+  }, []);
+
+  const scheduleClose = useCallback(() => {
+    cancelClose();
+    closeTimerRef.current = setTimeout(() => setActivePanel(null), 20);
+  }, [cancelClose]);
+
+  function openPanel(panel: ActivePanel) {
+    cancelClose();
+    setShownPanel(panel);
+    setActivePanel(panel);
   }
 
-  // Close flyout on click-outside
-  useEffect(() => {
-    if (!activePanel) return;
-    function handleMouseDown(e: MouseEvent) {
-      const target = e.target as Node;
-      if (
-        !railRef.current?.contains(target) &&
-        !flyoutRef.current?.contains(target)
-      ) {
-        setActivePanel(null);
-      }
-    }
-    document.addEventListener("mousedown", handleMouseDown);
-    return () => document.removeEventListener("mousedown", handleMouseDown);
-  }, [activePanel]);
+  // Clean up timer on unmount
+  useEffect(() => () => { if (closeTimerRef.current) clearTimeout(closeTimerRef.current); }, []);
 
   return (
     <>
-      {/* Flyout panel — fixed overlay, slides in from the left */}
+      {/* Flyout panel — slides in from the left, starts from top */}
       <div
         ref={flyoutRef}
-        className={`fixed bottom-0 left-14 top-14 z-40 flex w-[280px] flex-col border-r border-white/[0.08] bg-hub-surface shadow-2xl transition-transform duration-200 ease-out ${
+        onMouseEnter={cancelClose}
+        onMouseLeave={scheduleClose}
+        className={`fixed bottom-0 left-14 top-0 z-40 flex w-[280px] flex-col border-r border-white/[0.07] bg-[#0c1a2e]/95 shadow-2xl backdrop-blur-xl transition-transform duration-200 ease-out ${
           activePanel !== null ? "translate-x-0" : "-translate-x-full"
         }`}
         aria-hidden={activePanel === null}
@@ -149,33 +181,93 @@ export function RightSidebar({
               ) : (
                 plans.map((p) => {
                   const active = p.id === activePlanId;
+                  const menuOpen = menuOpenId === p.id;
+                  const renaming = renamingId === p.id;
                   return (
                     <li key={p.id}>
-                      <div className="flex items-center gap-2">
-                        <button
-                          type="button"
-                          onClick={() => onSelectPlan(p.id)}
-                          className={`flex flex-1 flex-col rounded-lg px-3 py-2 text-left text-sm transition ${
-                            active
-                              ? "border-l-2 border-hub-cyan bg-white/[0.04] text-hub-text"
-                              : "border-l-2 border-transparent text-hub-text-secondary hover:bg-white/[0.03]"
-                          }`}
-                        >
-                          <span className="flex items-center justify-between gap-2">
-                            <span className="min-w-0 truncate">{p.label}</span>
-                            {active ? (
-                              <span className="shrink-0 text-[10px] font-medium text-hub-cyan">
-                                Active
-                              </span>
-                            ) : null}
-                          </span>
-                          {p.subtitle ? (
-                            <span className="mt-0.5 text-[10px] text-hub-text-muted">
-                              {p.subtitle}
+                      <div className="flex items-center gap-1">
+                        {/* Rename inline input */}
+                        {renaming ? (
+                          <div className="flex flex-1 items-center gap-1 px-1">
+                            <input
+                              autoFocus
+                              value={renameValue}
+                              onChange={(e) => setRenameValue(e.target.value)}
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter" && renameValue.trim()) {
+                                  onRenamePlan?.(p.id, renameValue.trim());
+                                  setRenamingId(null);
+                                } else if (e.key === "Escape") {
+                                  setRenamingId(null);
+                                }
+                              }}
+                              onBlur={() => {
+                                if (renameValue.trim()) onRenamePlan?.(p.id, renameValue.trim());
+                                setRenamingId(null);
+                              }}
+                              className="min-w-0 flex-1 rounded border border-hub-cyan/40 bg-hub-bg/60 px-2 py-1 text-xs text-hub-text outline-none focus:border-hub-cyan/70"
+                            />
+                            <button
+                              type="button"
+                              onMouseDown={(e) => {
+                                e.preventDefault();
+                                if (renameValue.trim()) {
+                                  onRenamePlan?.(p.id, renameValue.trim());
+                                }
+                                setRenamingId(null);
+                              }}
+                              className="inline-flex h-6 w-6 items-center justify-center rounded text-hub-success hover:bg-white/[0.06]"
+                            >
+                              <Check className="h-3.5 w-3.5" />
+                            </button>
+                          </div>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => onSelectPlan(p.id)}
+                            className={`flex flex-1 flex-col rounded-lg px-3 py-2 text-left text-sm transition ${
+                              active
+                                ? "border-l-2 border-hub-cyan bg-white/[0.04] text-hub-text"
+                                : "border-l-2 border-transparent text-hub-text-secondary hover:bg-white/[0.03]"
+                            }`}
+                          >
+                            <span className="flex items-center justify-between gap-2">
+                              <span className="min-w-0 truncate font-medium">{p.label}</span>
+                              {active && (
+                                <span className="shrink-0 text-[10px] font-semibold text-hub-cyan">
+                                  Active
+                                </span>
+                              )}
                             </span>
-                          ) : null}
-                        </button>
-                        {onDeletePlan ? (
+                            {p.subtitle && (
+                              <span className="mt-1 text-[10px] text-hub-cyan/60">
+                                {p.subtitle}
+                              </span>
+                            )}
+                            {(p.courseCount != null || p.trendLabel || p.updatedAt) && (
+                              <span className="mt-2 flex flex-col gap-0.5">
+                                {p.courseCount != null && (
+                                  <span className="text-[10px] text-hub-text-secondary">
+                                    {p.courseCount} course{p.courseCount !== 1 ? "s" : ""}
+                                  </span>
+                                )}
+                                {p.trendLabel && (
+                                  <span className={`text-[10px] font-medium ${trendColor(p.fitnessScore)}`}>
+                                    {p.trendLabel}
+                                  </span>
+                                )}
+                                {p.updatedAt && (
+                                  <span className="text-[10px] text-hub-text-secondary/60">
+                                    {relativeTime(p.updatedAt)}
+                                  </span>
+                                )}
+                              </span>
+                            )}
+                          </button>
+                        )}
+
+                        {/* Quick delete */}
+                        {onDeletePlan && !renaming && (
                           <button
                             type="button"
                             onClick={(e) => {
@@ -183,11 +275,62 @@ export function RightSidebar({
                               onDeletePlan(p.id);
                             }}
                             title="Delete plan"
-                            className="inline-flex h-8 w-8 items-center justify-center rounded-md text-hub-text-secondary hover:text-red-400"
+                            className="inline-flex h-7 w-7 items-center justify-center rounded-md text-hub-text-secondary hover:text-red-400"
                           >
-                            <Trash className="h-4 w-4" />
+                            <Trash className="h-3.5 w-3.5" />
                           </button>
-                        ) : null}
+                        )}
+
+                        {/* 3-dot menu */}
+                        {(onDeletePlan || onRenamePlan) && !renaming && (
+                          <div className="relative">
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setMenuOpenId(menuOpen ? null : p.id);
+                              }}
+                              title="More options"
+                              className="inline-flex h-7 w-7 items-center justify-center rounded-md text-hub-text-secondary hover:text-hub-text"
+                            >
+                              <MoreHorizontal className="h-3.5 w-3.5" />
+                            </button>
+                            {menuOpen && (
+                              <div
+                                className="absolute right-0 top-8 z-50 min-w-[140px] rounded-lg border border-white/[0.1] bg-hub-surface-elevated shadow-xl"
+                                onMouseLeave={() => setMenuOpenId(null)}
+                              >
+                                {onRenamePlan && (
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setMenuOpenId(null);
+                                      setRenameValue(p.label);
+                                      setRenamingId(p.id);
+                                    }}
+                                    className="flex w-full items-center gap-2 px-3 py-2 text-xs text-hub-text-secondary transition hover:bg-white/[0.05] hover:text-hub-text"
+                                  >
+                                    Rename
+                                  </button>
+                                )}
+                                {onDeletePlan && (
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setMenuOpenId(null);
+                                      onDeletePlan(p.id);
+                                    }}
+                                    className="flex w-full items-center gap-2 px-3 py-2 text-xs text-red-400/80 transition hover:bg-white/[0.05] hover:text-red-400"
+                                  >
+                                    Delete
+                                  </button>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        )}
                       </div>
                     </li>
                   );
@@ -254,22 +397,36 @@ export function RightSidebar({
         )}
       </div>
 
-      {/* Icon rail — 56px wide, left edge of layout */}
+      {/* Layout placeholder — maintains 56px flex space while rail is fixed */}
+      <div className="w-14 shrink-0" aria-hidden />
+
+      {/* Icon rail — fixed full-height dock, covers sidebar column top-to-bottom */}
       <aside
         ref={railRef}
-        className="glass-panel relative z-50 flex w-14 shrink-0 flex-col items-center gap-1 border-r border-white/[0.08] py-3"
+        onMouseEnter={() => openPanel(shownPanel)}
+        onMouseLeave={scheduleClose}
+        className="fixed top-0 left-0 z-50 flex h-dvh w-14 shrink-0 flex-col items-center gap-1 border-r border-white/[0.07] bg-[#091727]/90 backdrop-blur-xl py-3"
       >
+        {/* Brand mark fills the header-height slot at the top of the rail */}
+        <a
+          href="/"
+          className="mb-2 flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-white/[0.08] bg-hub-surface/80 text-hub-cyan transition hover:border-hub-cyan/30"
+          aria-label="Home"
+        >
+          <Home className="h-4 w-4" aria-hidden />
+        </a>
+        <div className="my-1 h-px w-6 bg-white/[0.06]" />
         <IconButton
           icon={BookmarkCheck}
           label="Saved plans"
           active={activePanel === "plans"}
-          onClick={() => togglePanel("plans")}
+          onClick={() => openPanel("plans")}
         />
         <IconButton
           icon={FolderOpen}
           label="Saved files"
           active={activePanel === "vault"}
-          onClick={() => togglePanel("vault")}
+          onClick={() => openPanel("vault")}
         />
         <div className="flex-1" />
         <Link

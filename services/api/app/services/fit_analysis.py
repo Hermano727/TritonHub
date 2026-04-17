@@ -40,6 +40,7 @@ class FitAnalysisResult(BaseModel):
 
 class FitAnalysisRequest(BaseModel):
     results: list[CourseResearchResult]
+    user_context: dict | None = None
 
 
 def resolve_gemini_api_key() -> str:
@@ -144,10 +145,36 @@ def compute_workload_signals(results: list[CourseResearchResult]) -> dict:
     }
 
 
+def _build_user_context_block(ctx: dict) -> str:
+    """Format student briefing context into a prompt section."""
+    lines = []
+    if ctx.get("scheduleTitle"):
+        lines.append(f"- Schedule name: {ctx['scheduleTitle']}")
+    if ctx.get("priority"):
+        lines.append(f"- Primary priority: {ctx['priority']}")
+    if ctx.get("balancedDifficulty") is not None:
+        tol = "balanced / avoid overload" if ctx["balancedDifficulty"] else "challenge — willing to push hard"
+        lines.append(f"- Difficulty tolerance: {tol}")
+    if ctx.get("skillFocus"):
+        lines.append(f"- Skill focus preference: {ctx['skillFocus']}")
+    if ctx.get("transitProfile"):
+        lines.append(f"- Transit mode: {ctx['transitProfile']}")
+    if ctx.get("careerGoals"):
+        lines.append(f"- Career goals: {ctx['careerGoals']}")
+    if ctx.get("currentWorries"):
+        lines.append(f"- Current worries: {ctx['currentWorries']}")
+    if ctx.get("externalCommitments"):
+        lines.append(f"- External commitments: {ctx['externalCommitments']}")
+    if not lines:
+        return ""
+    return "## Student context\n" + "\n".join(lines) + "\n\n"
+
+
 def build_fit_prompt(
     results: list[CourseResearchResult],
     conflicts: list[dict],
     workload: dict,
+    user_context: dict | None = None,
 ) -> str:
     course_lines = []
     for r in results:
@@ -186,8 +213,11 @@ def build_fit_prompt(
     missing = workload["missing_logistics"]
     missing_str = ", ".join(missing) if missing else "none"
 
+    context_block = _build_user_context_block(user_context) if user_context else ""
+
     return (
         "You are a UCSD academic advisor performing a schedule feasibility analysis.\n\n"
+        f"{context_block}"
         "## Courses under review\n"
         f"{courses_block}\n\n"
         "## Detected time conflicts (programmatic)\n"
@@ -203,14 +233,22 @@ def build_fit_prompt(
         "fitness_max (10.0), trend_label (short phrase like 'Manageable' or 'Heavy Load'), "
         "categories (array, up to 4 — e.g. Campus Flow, Workload, Time Spread, Life Balance; each: label, score (1–10), max (10), color (hex string like '#00d4ff'), detail (short explanation)), "
         "alerts (up to 5, each: id like 'a1', severity, title, detail), recommendation (2–4 sentence paragraph). "
-        "Rules: any time conflict must produce a critical alert; hedge if data is missing; prefer the categories named above when relevant; no markdown fences in your response."
+        "Rules: any time conflict must produce a critical alert; hedge if data is missing; prefer the categories named above when relevant; "
+        + (
+            "tailor the recommendation and Life Balance category to reflect the student's stated context above; "
+            if user_context else ""
+        )
+        + "no markdown fences in your response."
     )
 
 
-def analyze_fit(results: list[CourseResearchResult]) -> FitAnalysisResult:
+def analyze_fit(
+    results: list[CourseResearchResult],
+    user_context: dict | None = None,
+) -> FitAnalysisResult:
     conflicts = find_time_conflicts(results)
     workload = compute_workload_signals(results)
-    prompt = build_fit_prompt(results, conflicts, workload)
+    prompt = build_fit_prompt(results, conflicts, workload, user_context=user_context)
     client = genai.Client(api_key=resolve_gemini_api_key())
     response = client.models.generate_content(
         model="gemini-2.5-flash",

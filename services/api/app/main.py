@@ -1,4 +1,10 @@
 import logging
+
+# Show INFO logs from all app.services so Reddit/RMP/synthesizer activity is visible
+logging.basicConfig(level=logging.INFO, format="%(levelname)s [%(name)s] %(message)s")
+for _noisy in ("httpx", "httpcore", "google", "asyncio"):
+    logging.getLogger(_noisy).setLevel(logging.WARNING)
+logging.getLogger("app").setLevel(logging.INFO)
 logging.getLogger("app.services.geocode").setLevel(logging.DEBUG)
 
 from fastapi import Depends, FastAPI, HTTPException

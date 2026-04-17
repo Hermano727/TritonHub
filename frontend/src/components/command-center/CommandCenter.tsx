@@ -2,19 +2,18 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { ChevronRight } from "lucide-react";
+import { AlertCircle, ChevronRight } from "lucide-react";
 import { RightSidebar } from "@/components/layout/RightSidebar";
 import { IngestionHub } from "@/components/ingestion/IngestionHub";
 import { ProcessingModal } from "@/components/modals/ProcessingModal";
+import { ScheduleBriefingModal } from "@/components/modals/ScheduleBriefingModal";
 import { DossierScheduleWorkspace, type DossierScheduleWorkspaceHandle } from "@/components/dashboard/DossierScheduleWorkspace";
-import { SaveMenu } from "@/components/command-center/SaveMenu";
 import { usePlanSync } from "@/hooks/usePlanSync";
 import { mockDossier } from "@/lib/mock/dossier";
-import { buildPayloadFromClasses } from "@/lib/hub/plan-payload";
 import { analyzeFit, researchScreenshot } from "@/lib/api/parse";
 import { courseResearchResultToDossier } from "@/lib/mappers/courseEntryToDossier";
 import { dossiersToScheduleItems } from "@/lib/mappers/dossiersToScheduleItems";
-import type { ClassDossier, ScheduleEvaluation, UiPhase } from "@/types/dossier";
+import type { ClassDossier, ScheduleBriefing, ScheduleEvaluation, UiPhase } from "@/types/dossier";
 
 const LINE_MS = 360;
 const FINISH_PAD_MS = 650;
@@ -142,12 +141,111 @@ function IdlePreviewCard() {
   );
 }
 
+// ── Inline-editable breadcrumb nav ───────────────────────────────────────────
+function BreadcrumbNav({
+  phase,
+  quarterLabel,
+  activePlanTitle,
+  briefingTitle,
+  onRename,
+}: {
+  phase: string;
+  quarterLabel: string;
+  activePlanTitle: string;
+  briefingTitle?: string;
+  onRename: (newTitle: string) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState("");
+  const [emptyWarning, setEmptyWarning] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  // The displayed plan name: briefingTitle wins, then saved plan title, then quarterLabel
+  const planName = briefingTitle || activePlanTitle || quarterLabel || "New schedule";
+
+  function open() {
+    setDraft(planName);
+    setEmptyWarning(false);
+    setEditing(true);
+    setTimeout(() => inputRef.current?.select(), 0);
+  }
+
+  function commit() {
+    if (!draft.trim()) {
+      setEmptyWarning(true);
+      return;
+    }
+    onRename(draft.trim());
+    setEditing(false);
+    setEmptyWarning(false);
+  }
+
+  return (
+    <nav
+      className="mb-4 flex flex-wrap items-center gap-1 text-sm text-hub-text-muted"
+      aria-label="Breadcrumb"
+    >
+      <span className="text-xs">Schedules</span>
+      <ChevronRight className="h-3 w-3 shrink-0" aria-hidden />
+      <span className="text-xs font-medium text-hub-text-secondary">{quarterLabel}</span>
+      {phase === "dashboard" && (
+        <>
+          <ChevronRight className="h-3 w-3 shrink-0" aria-hidden />
+          {editing ? (
+            <span className="flex items-center gap-1.5">
+              <input
+                ref={inputRef}
+                value={draft}
+                onChange={(e) => { setDraft(e.target.value); setEmptyWarning(false); }}
+                onBlur={commit}
+                onKeyDown={(e) => { if (e.key === "Enter") commit(); if (e.key === "Escape") setEditing(false); }}
+                className="rounded border border-hub-cyan/40 bg-hub-bg/60 px-2 py-0.5 text-sm font-semibold text-hub-text outline-none focus:border-hub-cyan/70"
+                style={{ minWidth: 120, maxWidth: 260 }}
+              />
+              {emptyWarning && (
+                <span className="flex items-center gap-1 text-xs text-hub-danger">
+                  <AlertCircle className="h-3 w-3" />
+                  Can't be empty
+                </span>
+              )}
+            </span>
+          ) : (
+            <button
+              type="button"
+              onClick={open}
+              title="Click to rename"
+              className="group flex items-center gap-1 rounded px-1 py-0.5 font-semibold text-hub-cyan transition hover:bg-hub-cyan/10"
+            >
+              <span className="text-sm">{planName}</span>
+              <span className="text-[9px] font-normal text-hub-text-muted/60 opacity-0 transition group-hover:opacity-100">
+                Rename
+              </span>
+            </button>
+          )}
+        </>
+      )}
+    </nav>
+  );
+}
+
 export function CommandCenter() {
   const [phase, setPhase] = useState<UiPhase>("idle");
   const [ingestionCollapsed, setIngestionCollapsed] = useState(false);
   const [classes, setClasses] = useState<ClassDossier[]>(mockDossier.classes);
   const [evaluation, setEvaluation] = useState<ScheduleEvaluation>(mockDossier.evaluation);
-  const [saveMenuOpen, setSaveMenuOpen] = useState(false);
+
+  // Save flow state
+  const [showSavePrompt, setShowSavePrompt] = useState(false);
+  const [lastSavedAt, setLastSavedAt] = useState<Date | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+
+  // Briefing state
+  const [showBriefing, setShowBriefing] = useState(false);
+  const [briefingResearchDone, setBriefingResearchDone] = useState(false);
+  const [briefingData, setBriefingData] = useState<ScheduleBriefing | null>(null);
+  const briefingDataRef = useRef<ScheduleBriefing | null>(null);
+  const briefingResolveRef = useRef<((data: ScheduleBriefing | null) => void) | null>(null);
 
   const workspaceRef = useRef<DossierScheduleWorkspaceHandle | null>(null);
   const timeoutsRef = useRef<number[]>([]);
@@ -169,22 +267,26 @@ export function CommandCenter() {
     setEvaluation(mockDossier.evaluation);
   }, [clearRun]);
 
+  // Plan-switch guard: ID of the plan the user wants to switch to (pending confirmation)
+  const [pendingSwitchId, setPendingSwitchId] = useState<string | null>(null);
+
   const {
     authed,
     isUcsdUser,
     activePlanId,
     setActivePlanId,
     quarterLabel,
+    activePlanTitle,
     sidebarPlans,
     sidebarVault,
     viewClasses,
     viewEvaluation,
     viewCommitments,
-    persistCompletedSession,
-    handleSaveOverwrite,
-    handleSaveAsNew,
+    isPlanLoading,
+    handleSave,
     handleNewPlan,
     handleDeletePlan,
+    handleRenamePlan,
   } = usePlanSync({
     phase,
     classes,
@@ -192,6 +294,21 @@ export function CommandCenter() {
     workspaceRef,
     onPlanCreated: resetDemo,
   });
+
+  const switchToPlan = useCallback((id: string) => {
+    setActivePlanId(id);
+    setPhase("dashboard");
+  }, [setActivePlanId]);
+
+  const handleSelectPlan = useCallback((id: string) => {
+    if (id === activePlanId) return;
+    const dirty = workspaceRef.current?.isDirty ?? false;
+    if (dirty && phase === "dashboard") {
+      setPendingSwitchId(id);
+    } else {
+      switchToPlan(id);
+    }
+  }, [activePlanId, phase, switchToPlan, workspaceRef]);
 
   const runIngestionFlow = useCallback(
     async (imageFile: File | undefined) => {
@@ -206,9 +323,27 @@ export function CommandCenter() {
 
       if (imageFile?.type.startsWith("image/")) {
         try {
+          // Open the briefing modal so the user can fill context while research runs.
+          // Create a promise that resolves only when the user explicitly acts (Begin/Skip).
+          briefingDataRef.current = null;
+          setBriefingData(null);
+          setBriefingResearchDone(false);
+          setShowBriefing(true);
+
+          const briefingPromise = new Promise<ScheduleBriefing | null>((resolve) => {
+            briefingResolveRef.current = resolve;
+          });
+
           const response = await researchScreenshot(imageFile);
           const parsed = response.results.map(courseResearchResultToDossier);
           if (parsed.length > 0) nextClasses = parsed;
+
+          // Research is done — update status in modal but keep it open until user acts
+          setBriefingResearchDone(true);
+
+          // Await user input (Begin → or Skip for now)
+          const currentBriefing = await briefingPromise;
+          briefingResolveRef.current = null;
 
           const minWaitPromise = new Promise<void>((resolve) => {
             const elapsed = Date.now() - started;
@@ -217,8 +352,13 @@ export function CommandCenter() {
             timeoutsRef.current.push(id);
           });
 
+          // Use cached fit evaluation when the fast-path returned one —
+          // avoids a redundant Gemini call and keeps the score deterministic.
+          const cachedFit = response.fit_evaluation ?? null;
           const [fitResult] = await Promise.all([
-            analyzeFit(response.results).catch(() => null),
+            cachedFit
+              ? Promise.resolve(cachedFit)
+              : analyzeFit(response.results, currentBriefing ?? undefined).catch(() => null),
             minWaitPromise,
           ]);
 
@@ -233,6 +373,10 @@ export function CommandCenter() {
             };
           }
         } catch (err) {
+          // Resolve pending briefing promise so the flow doesn't hang
+          briefingResolveRef.current?.(null);
+          briefingResolveRef.current = null;
+          setShowBriefing(false);
           console.error("runIngestionFlow: researchScreenshot failed:", err);
         }
       }
@@ -250,19 +394,68 @@ export function CommandCenter() {
       setClasses(nextClasses);
       setEvaluation(nextEvaluation);
       processingLockRef.current = false;
+      setActivePlanId(""); // Clear stale plan reference so fresh upload data is shown
       setPhase("dashboard");
       setIngestionCollapsed(true);
 
-      const payload = buildPayloadFromClasses(
-        mockDossier.activeQuarterId,
-        nextClasses,
-        [],
-        nextEvaluation,
-      );
-      await persistCompletedSession(payload);
+      // If the upload produced real data, arm the one-time Review phase save prompt
+      // and clear any previous save state so this is treated as a fresh session.
+      if (nextClasses !== mockDossier.classes) {
+        setShowSavePrompt(true);
+        setLastSavedAt(null);
+        setSaveError(null);
+      }
     },
-    [clearRun, persistCompletedSession],
+    [clearRun],
   );
+
+  const handleManualSave = useCallback(async () => {
+    setIsSaving(true);
+    setSaveError(null);
+    try {
+      await handleSave(briefingData?.scheduleTitle);
+      setLastSavedAt(new Date());
+      setShowSavePrompt(false);
+    } catch {
+      setSaveError("Couldn't save your schedule. Please try again.");
+    } finally {
+      setIsSaving(false);
+    }
+  }, [handleSave, briefingData]);
+
+  const handleSaveAndSwitch = useCallback(async () => {
+    if (!pendingSwitchId) return;
+    const targetId = pendingSwitchId;
+    setPendingSwitchId(null);
+    setIsSaving(true);
+    setSaveError(null);
+    try {
+      await handleSave(briefingData?.scheduleTitle);
+      setLastSavedAt(new Date());
+      setShowSavePrompt(false);
+    } catch {
+      // Save failed — still switch, since the user chose "save & switch"
+    } finally {
+      setIsSaving(false);
+    }
+    switchToPlan(targetId);
+  }, [pendingSwitchId, handleSave, briefingData, switchToPlan]);
+
+  const handleBriefingSubmit = useCallback((data: ScheduleBriefing) => {
+    briefingDataRef.current = data;
+    setBriefingData(data);
+    setShowBriefing(false);
+    setBriefingResearchDone(false);
+    briefingResolveRef.current?.(data);
+    briefingResolveRef.current = null;
+  }, []);
+
+  const handleBriefingSkip = useCallback(() => {
+    setShowBriefing(false);
+    setBriefingResearchDone(false);
+    briefingResolveRef.current?.(null);
+    briefingResolveRef.current = null;
+  }, []);
 
   const handleFilesSelected = useCallback(
     (files: FileList | File[]) => {
@@ -289,10 +482,11 @@ export function CommandCenter() {
           planSectionTitle={authed ? "Saved plans" : "My Quarters"}
           plans={sidebarPlans}
           activePlanId={activePlanId}
-          onSelectPlan={(id) => { setActivePlanId(id); setPhase("dashboard"); }}
+          onSelectPlan={handleSelectPlan}
           newPlanLabel={authed ? "New saved plan" : "New quarter research"}
           onNewPlan={authed ? handleNewPlan : undefined}
           onDeletePlan={authed ? handleDeletePlan : undefined}
+          onRenamePlan={authed ? handleRenamePlan : undefined}
           vaultItems={sidebarVault}
           vaultSynced={authed}
         />
@@ -304,20 +498,18 @@ export function CommandCenter() {
           <div
             className={`mx-auto w-full ${phase === "dashboard" ? "max-w-[min(100%,1760px)]" : "max-w-5xl"} ${phase === "processing" ? "pointer-events-none blur-[2px]" : ""}`}
           >
-            <nav
-              className="mb-4 flex flex-wrap items-center gap-1 text-xs text-hub-text-muted"
-              aria-label="Breadcrumb"
-            >
-              <span>Schedules</span>
-              <ChevronRight className="h-3 w-3" aria-hidden />
-              <span className="font-medium text-hub-text-secondary">{quarterLabel}</span>
-              {phase === "dashboard" ? (
-                <>
-                  <ChevronRight className="h-3 w-3" aria-hidden />
-                  <span className="text-hub-cyan">Courses</span>
-                </>
-              ) : null}
-            </nav>
+            <BreadcrumbNav
+              phase={phase}
+              quarterLabel={quarterLabel}
+              activePlanTitle={activePlanTitle}
+              briefingTitle={briefingData?.scheduleTitle}
+              onRename={(newTitle) => {
+                if (activePlanId && authed) {
+                  void handleRenamePlan(activePlanId, newTitle);
+                }
+                setBriefingData((prev) => prev ? { ...prev, scheduleTitle: newTitle } : null);
+              }}
+            />
 
             <AnimatePresence mode="popLayout">
               {phase === "idle" ? (
@@ -427,7 +619,23 @@ export function CommandCenter() {
                   transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
                   className="space-y-4"
                 >
-                  {viewClasses.length === 0 ? (
+                  {isPlanLoading ? (
+                    <motion.div
+                      key="plan-loading"
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      exit={{ opacity: 0 }}
+                      transition={{ duration: 0.2 }}
+                      className="flex flex-col items-center justify-center gap-4 rounded-2xl border border-white/[0.06] bg-hub-surface/60 py-24"
+                    >
+                      <div className="relative h-8 w-8">
+                        <div className="absolute inset-0 animate-spin rounded-full border-2 border-white/[0.08] border-t-hub-cyan/70" />
+                      </div>
+                      <p className="font-[family-name:var(--font-outfit)] text-sm text-hub-text-muted">
+                        Loading plan…
+                      </p>
+                    </motion.div>
+                  ) : viewClasses.length === 0 ? (
                     <p className="rounded-xl border border-white/[0.08] bg-hub-bg/40 px-4 py-8 text-center text-sm text-hub-text-muted">
                       No schedule data for this plan yet. Upload your schedule above or select another saved plan.
                     </p>
@@ -440,17 +648,13 @@ export function CommandCenter() {
                       transitionInsights={[]}
                       initialCommitments={viewCommitments}
                       ref={workspaceRef}
-                      calendarHeaderActions={(
-                        <div className="flex items-center gap-2">
-                          <SaveMenu
-                            open={saveMenuOpen}
-                            onToggle={() => setSaveMenuOpen((s) => !s)}
-                            onOverwrite={() => void handleSaveOverwrite()}
-                            onSaveAsNew={() => void handleSaveAsNew()}
-                            onClose={() => setSaveMenuOpen(false)}
-                          />
-                        </div>
-                      )}
+                      onSave={authed ? handleManualSave : undefined}
+                      isSaving={isSaving}
+                      lastSavedAt={lastSavedAt}
+                      saveError={saveError}
+                      showSavePrompt={showSavePrompt}
+                      onSavePromptDismiss={() => setShowSavePrompt(false)}
+                      transitProfile={briefingData?.transitProfile}
                     />
                   )}
                 </motion.div>
@@ -462,6 +666,73 @@ export function CommandCenter() {
       </div>
 
       <ProcessingModal open={phase === "processing"} />
+      <ScheduleBriefingModal
+        open={showBriefing}
+        onSubmit={handleBriefingSubmit}
+        onSkip={handleBriefingSkip}
+        researchDone={briefingResearchDone}
+      />
+
+      {/* ── Unsaved-changes guard modal ── */}
+      <AnimatePresence>
+        {pendingSwitchId && (
+          <motion.div
+            key="switch-guard"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.15 }}
+            className="fixed inset-0 z-[80] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
+            onClick={() => setPendingSwitchId(null)}
+          >
+            <motion.div
+              initial={{ opacity: 0, scale: 0.96, y: 8 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.96 }}
+              transition={{ duration: 0.15 }}
+              className="w-full max-w-sm rounded-2xl border border-white/[0.10] bg-hub-surface-elevated p-6 shadow-2xl"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <p className="font-[family-name:var(--font-outfit)] text-base font-semibold text-hub-text">
+                Unsaved changes
+              </p>
+              <p className="mt-2 text-sm leading-relaxed text-hub-text-muted">
+                You have unsaved edits to this plan. What would you like to do before switching?
+              </p>
+              <div className="mt-5 flex flex-col gap-2">
+                {authed && (
+                  <button
+                    type="button"
+                    onClick={() => void handleSaveAndSwitch()}
+                    disabled={isSaving}
+                    className="w-full rounded-xl bg-hub-cyan px-4 py-2.5 text-sm font-semibold text-hub-bg transition hover:bg-hub-cyan/85 disabled:opacity-50"
+                  >
+                    {isSaving ? "Saving…" : "Save & switch"}
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => {
+                    const id = pendingSwitchId;
+                    setPendingSwitchId(null);
+                    switchToPlan(id);
+                  }}
+                  className="w-full rounded-xl border border-white/[0.10] px-4 py-2.5 text-sm font-medium text-hub-text-secondary transition hover:bg-white/[0.04] hover:text-hub-text"
+                >
+                  Discard changes &amp; switch
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPendingSwitchId(null)}
+                  className="w-full px-4 py-2 text-sm font-medium text-hub-text-muted transition hover:text-hub-text"
+                >
+                  Cancel
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

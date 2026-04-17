@@ -1,12 +1,13 @@
 "use client";
 
 import { useRef, useState, type ReactNode } from "react";
+import { Pencil } from "lucide-react";
 import type { ClassDossier, ScheduleCommitment, SectionMeeting } from "@/types/dossier";
 import { isExamSection } from "@/lib/mappers/dossiersToScheduleItems";
 
 const DEFAULT_PX_PER_HOUR = 64;
 
-const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri"] as const;
+const ALL_DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"] as const;
 
 const PALETTE = [
   {
@@ -58,6 +59,9 @@ export function parseDaysToCols(days: string): number[] {
     } else if (days.startsWith("Sa", i)) {
       cols.push(5);
       i += 2;
+    } else if (days.startsWith("Su", i)) {
+      cols.push(6);
+      i += 2;
     } else if (days[i] === "M") {
       cols.push(0);
       i++;
@@ -78,6 +82,8 @@ export const COL_TO_DAY: Record<number, string> = {
   2: "W",
   3: "Th",
   4: "F",
+  5: "Sa",
+  6: "Su",
 };
 
 export function minutesToTimeStr(min: number): string {
@@ -92,6 +98,24 @@ export function minutesToTimeInput(min: number): string {
   return `${String(Math.floor(min / 60)).padStart(2, "0")}:${String(min % 60).padStart(2, "0")}`;
 }
 
+/** Compact "2:00" or "2" (drops :00 when on the hour) without AM/PM */
+function fmtHM(min: number): string {
+  const h = Math.floor(min / 60);
+  const m = min % 60;
+  const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h;
+  return m === 0 ? `${h12}` : `${h12}:${String(m).padStart(2, "0")}`;
+}
+
+/** Compact time range, e.g. "2–2:50p" or "11:30a–12:20p" */
+function fmtBlockRange(startMin: number, endMin: number): string {
+  const period = (m: number) => (Math.floor(m / 60) < 12 ? "a" : "p");
+  const sp = period(startMin);
+  const ep = period(endMin);
+  return sp === ep
+    ? `${fmtHM(startMin)}–${fmtHM(endMin)}${ep}`
+    : `${fmtHM(startMin)}${sp}–${fmtHM(endMin)}${ep}`;
+}
+
 export function removeDayFromString(days: string, colToRemove: number): string {
   const remaining = parseDaysToCols(days).filter((c) => c !== colToRemove);
   return remaining.map((c) => COL_TO_DAY[c]).join("");
@@ -102,6 +126,8 @@ export interface CourseBlock {
   meeting: SectionMeeting;
   color: (typeof PALETTE)[number];
   courseCode: string;
+  /** Display label — equals courseLabels override if set, otherwise courseCode. */
+  label: string;
   col: number;
   startMin: number;
   endMin: number;
@@ -121,6 +147,8 @@ type GridBlock = CourseBlock | CommitmentBlock;
 export interface WeeklyCalendarProps {
   classes: ClassDossier[];
   commitments: ScheduleCommitment[];
+  /** Display label overrides — key: "${dossierId}:${meetingIdx}". Decoupled from ClassDossier.courseCode. */
+  courseLabels?: Record<string, string>;
   onApply: (next: { classes: ClassDossier[]; commitments: ScheduleCommitment[] }) => void;
   pxPerHour?: number;
   className?: string;
@@ -130,6 +158,8 @@ export interface WeeklyCalendarProps {
   hideScheduleHeading?: boolean;
   /** Called when a block is double-clicked — use to open an edit modal. */
   onBlockDoubleClick?: (block: CourseBlock | CommitmentBlock) => void;
+  /** Called on single click of a course block — use to sync map highlight. */
+  onBlockClick?: (dossierId: string) => void;
   /** When set, course blocks matching this dossier ID will glow cyan. */
   highlightedDossierId?: string | null;
 }
@@ -137,12 +167,14 @@ export interface WeeklyCalendarProps {
 export function WeeklyCalendar({
   classes,
   commitments,
+  courseLabels,
   onApply,
   pxPerHour = DEFAULT_PX_PER_HOUR,
   className = "",
   headerActions,
   hideScheduleHeading = false,
   onBlockDoubleClick,
+  onBlockClick,
   highlightedDossierId,
 }: WeeklyCalendarProps) {
   const pxPerMin = pxPerHour / 60;
@@ -152,7 +184,6 @@ export function WeeklyCalendar({
     top: number;
     height: number;
   } | null>(null);
-
   // Reliable double-click via click-timer (draggable elements can swallow dblclick events)
   const lastClickRef = useRef<{ key: string; time: number } | null>(null);
   function handleBlockClick(b: GridBlock) {
@@ -163,6 +194,7 @@ export function WeeklyCalendar({
       lastClickRef.current = null;
     } else {
       lastClickRef.current = { key, time: now };
+      if (b.kind === "course") onBlockClick?.(b.dossierId);
     }
   }
 
@@ -179,13 +211,16 @@ export function WeeklyCalendar({
       const endMin = parseTimeToMinutes(meeting.end_time);
       if (startMin < allStart) allStart = startMin;
       if (endMin > allEnd) allEnd = endMin;
+      const labelKey = `${dossier.id}:${meetingIdx}`;
+      const label = courseLabels?.[labelKey] ?? dossier.courseCode;
       parseDaysToCols(meeting.days).forEach((col) => {
-        if (col > 4) return;
+        if (col > 6) return;
         blocks.push({
           kind: "course",
           meeting,
           color,
           courseCode: dossier.courseCode,
+          label,
           col,
           startMin,
           endMin,
@@ -198,7 +233,7 @@ export function WeeklyCalendar({
   });
 
   commitments.forEach((c) => {
-    if (c.dayCol < 0 || c.dayCol > 4) return;
+    if (c.dayCol < 0 || c.dayCol > 6) return;
     if (c.startMin < allStart) allStart = c.startMin;
     if (c.endMin > allEnd) allEnd = c.endMin;
     blocks.push({
@@ -217,6 +252,10 @@ export function WeeklyCalendar({
 
   const hourLabels: number[] = [];
   for (let h = rangeStart / 60; h <= rangeEnd / 60; h++) hourLabels.push(h);
+
+  // Always show Mon–Fri; show Sat/Sun only when at least one block lands on those days.
+  const colsWithBlocks = new Set(blocks.map((b) => blockPosition(b).col));
+  const visibleCols = [0, 1, 2, 3, 4].concat([5, 6].filter((c) => colsWithBlocks.has(c)));
 
   function handleDragStart(e: React.DragEvent, blockKey: string) {
     e.dataTransfer.effectAllowed = "move";
@@ -373,12 +412,14 @@ export function WeeklyCalendar({
         <div className="w-full min-w-0">
           <div className="mb-1 flex">
             <div className="w-10 shrink-0" />
-            {DAYS.map((day) => (
+            {visibleCols.map((col) => (
               <div
-                key={day}
-                className="flex-1 text-center text-[11px] font-medium uppercase tracking-wider text-hub-text-muted"
+                key={col}
+                className={`flex-1 text-center text-[11px] font-medium uppercase tracking-wider ${
+                  col >= 5 ? "text-hub-text-muted/50" : "text-hub-text-muted"
+                }`}
               >
-                {day}
+                {ALL_DAYS[col]}
               </div>
             ))}
           </div>
@@ -402,14 +443,14 @@ export function WeeklyCalendar({
               ))}
             </div>
 
-            {DAYS.map((_, colIdx) => (
+            {visibleCols.map((col) => (
               <div
-                key={colIdx}
-                className="relative flex-1 border-l border-white/[0.06]"
+                key={col}
+                className={`relative flex-1 border-l ${col >= 5 ? "border-white/[0.04] bg-white/[0.01]" : "border-white/[0.06]"}`}
                 style={{ height: totalHeight }}
-                onDragOver={(e) => handleDragOver(e, colIdx)}
+                onDragOver={(e) => handleDragOver(e, col)}
                 onDragLeave={handleDragLeave}
-                onDrop={(e) => handleDrop(e, colIdx)}
+                onDrop={(e) => handleDrop(e, col)}
               >
                 {hourLabels.map((h) => (
                   <div
@@ -419,7 +460,7 @@ export function WeeklyCalendar({
                   />
                 ))}
 
-                {dropPreview?.col === colIdx && (
+                {dropPreview?.col === col && (
                   <div
                     className="pointer-events-none absolute inset-x-0.5 rounded border border-white/30 bg-white/10"
                     style={{ top: dropPreview.top, height: dropPreview.height }}
@@ -427,7 +468,7 @@ export function WeeklyCalendar({
                 )}
 
                 {blocks
-                  .filter((b) => blockPosition(b).col === colIdx)
+                  .filter((b) => blockPosition(b).col === col)
                   .map((b) => {
                     const { top, height } = blockPosition(b);
                     if (b.kind === "course") {
@@ -441,27 +482,40 @@ export function WeeklyCalendar({
                           onDragStart={(e) => handleDragStart(e, b.blockKey)}
                           onDragEnd={handleDragEnd}
                           onClick={(e) => { e.stopPropagation(); handleBlockClick(b); }}
-                          className={`absolute inset-x-0.5 overflow-hidden rounded border px-1 py-0.5 transition-all duration-200
+                          className={`group absolute inset-x-0.5 overflow-hidden rounded border px-1 py-0.5 transition-all duration-200
                           ${isHighlighted
                             ? "border-hub-cyan/90 bg-hub-cyan/20 z-10 shadow-[0_0_0_1px_rgba(0,212,255,0.25),0_0_14px_3px_rgba(0,212,255,0.18)]"
                             : `${b.color.border} ${b.color.bg}`}
                           ${dragKey === b.blockKey ? "cursor-grabbing opacity-40" : "cursor-grab"}`}
                           style={{ top, height }}
                         >
-                          <p
-                            className={`truncate text-[10px] font-bold leading-tight ${b.color.text}`}
-                          >
-                            {b.courseCode}: {minutesToTimeStr(b.startMin)}–{minutesToTimeStr(b.endMin)}
+                          <p className={`truncate text-[10px] font-bold leading-tight ${b.color.text}`}>
+                            {b.label}
                           </p>
-                          {height >= 28 && (
+                          {height >= 24 && (
+                            <p className="truncate text-[9px] leading-tight text-hub-text-muted">
+                              {fmtBlockRange(b.startMin, b.endMin)}
+                            </p>
+                          )}
+                          {height >= 38 && (
                             <p className="truncate text-[9px] leading-tight text-hub-text-muted">
                               {b.meeting.section_type}
                             </p>
                           )}
-                          {height >= 40 && (
+                          {height >= 52 && (
                             <p className="truncate text-[9px] leading-tight text-hub-text-muted">
                               {b.meeting.location}
                             </p>
+                          )}
+                          {onBlockDoubleClick && (
+                            <button
+                              type="button"
+                              aria-label="Edit block"
+                              onClick={(e) => { e.stopPropagation(); onBlockDoubleClick(b); }}
+                              className="absolute bottom-0.5 right-0.5 z-10 rounded p-0.5 bg-black/20 opacity-0 transition-opacity hover:bg-black/50 group-hover:opacity-100"
+                            >
+                              <Pencil className="h-2.5 w-2.5 text-white/70" aria-hidden />
+                            </button>
                           )}
                         </div>
                       );
@@ -474,7 +528,7 @@ export function WeeklyCalendar({
                         onDragStart={(e) => handleDragStart(e, b.blockKey)}
                         onDragEnd={handleDragEnd}
                         onClick={(e) => { e.stopPropagation(); handleBlockClick(b); }}
-                        className={`absolute inset-x-0.5 overflow-hidden rounded border px-1 py-0.5 shadow-[inset_0_0_0_1px_rgba(255,255,255,0.06)]
+                        className={`group absolute inset-x-0.5 overflow-hidden rounded border px-1 py-0.5 shadow-[inset_0_0_0_1px_rgba(255,255,255,0.06)]
                           ${dragKey === b.blockKey ? "cursor-grabbing opacity-40" : "cursor-grab"}`}
                         style={{
                           top,
@@ -493,6 +547,16 @@ export function WeeklyCalendar({
                           <p className="truncate text-[9px] leading-tight text-hub-text-muted">
                             {minutesToTimeStr(b.commitment.startMin)}–{minutesToTimeStr(b.commitment.endMin)}
                           </p>
+                        )}
+                        {onBlockDoubleClick && (
+                          <button
+                            type="button"
+                            aria-label="Edit block"
+                            onClick={(e) => { e.stopPropagation(); onBlockDoubleClick(b); }}
+                            className="absolute bottom-0.5 right-0.5 z-10 rounded p-0.5 bg-black/20 opacity-0 transition-opacity hover:bg-black/50 group-hover:opacity-100"
+                          >
+                            <Pencil className="h-2.5 w-2.5 text-white/70" aria-hidden />
+                          </button>
                         )}
                       </div>
                     );

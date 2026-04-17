@@ -124,26 +124,41 @@ def summarize_costs(results: list[CourseResearchResult]) -> BatchCostSummary:
 # Tiered pipeline (Tier 0-3: free/cheap alternatives to Browser Use)
 # ---------------------------------------------------------------------------
 
+async def _no_rmp() -> tuple[None, None]:
+    """Placeholder coroutine for when professor_name is unknown."""
+    return (None, None)
+
+
 async def _research_via_tiered_pipeline(
     course_code: str,
     professor_name: str | None,
 ) -> CourseRunOutcome:
     """
-    Execute Tiers 0-3 concurrently (Reddit, RMP, UCSD scrape, Gemini synthesis).
+    Execute Tiers 0-3 concurrently (Reddit, RMP, UCSD scrape, Gemini synthesis),
+    then Tier 0.5 (Gemini Reddit scoring) sequentially after Tier 0 returns.
+
     All data-gathering tiers catch their own errors and return empty values — they
-    never propagate exceptions.  Only Tier 3 (Gemini) can raise.
+    never propagate exceptions.  Only Tier 3 (Gemini synthesis) can raise.
     """
-    from app.services.reddit_client import search_reddit_ucsd
+    from app.services.reddit_client import search_reddit_ucsd, score_and_filter_reddit_posts
     from app.services.rmp_client import fetch_rmp_stats
     from app.services.ucsd_scraper import fetch_ucsd_course_description, fetch_ucsd_syllabus_snippets
     from app.services.logistics_synthesizer import synthesize_logistics
     from app.models.research import ResearchRawData
 
+    # Tiers 0-2: run concurrently
     reddit_posts, rmp_result, catalog_result, syllabus_result = await asyncio.gather(
-        search_reddit_ucsd(course_code),
-        fetch_rmp_stats(professor_name) if professor_name else asyncio.coroutine(lambda: (None, None))(),
+        search_reddit_ucsd(course_code, professor_name=professor_name),
+        fetch_rmp_stats(professor_name) if professor_name else _no_rmp(),
         fetch_ucsd_course_description(course_code),
         fetch_ucsd_syllabus_snippets(course_code, professor_name),
+    )
+
+    # Tier 0.5: Gemini relevance scoring on Reddit results (sequential — depends on Tier 0)
+    reddit_posts, pre_extracted_evidence = await score_and_filter_reddit_posts(
+        reddit_posts,
+        course_code=course_code,
+        professor_name=professor_name,
     )
 
     rmp_stats, rmp_url = rmp_result if rmp_result else (None, None)
@@ -154,6 +169,7 @@ async def _research_via_tiered_pipeline(
         course_code=course_code,
         professor_name=professor_name,
         reddit_posts=reddit_posts,
+        pre_extracted_reddit_evidence=pre_extracted_evidence,
         rmp_stats=rmp_stats,
         rmp_url=rmp_url,
         ucsd_course_description=course_description,
@@ -364,8 +380,53 @@ async def research_courses(
         try:
             known = get_known_schedule(cache_client, signature)
             if known is not None:
-                _log.info("[fast-path] known_schedules hit for signature %s", signature[:16])
-                return BatchResearchResponse.model_validate(known["assembled_payload"])
+                try:
+                    cached_response = BatchResearchResponse.model_validate(known["assembled_payload"])
+                    # Validate every result has a cache_id and no error.
+                    # A missing cache_id means the course wasn't cached when the snapshot was
+                    # taken (e.g. a failed or empty research run). An error field means the
+                    # previous run failed. In either case fall through so we re-research with
+                    # whatever is now in course_research_cache.
+                    all_valid = all(
+                        r.cache_id is not None and not r.error
+                        for r in cached_response.results
+                    )
+                    if all_valid:
+                        _log.info("[fast-path] known_schedules hit for signature %s", signature[:16])
+                        # Re-apply freshly-geocoded meetings from the current parse.
+                        # Old snapshots may have been stored before meetings were
+                        # included in CourseResearchResult, leaving meetings=[].
+                        # Even for up-to-date snapshots this is cheap: enrich_meetings_with_geocode
+                        # skips meetings that already have lat/lng, and ensures the
+                        # calendar always receives meeting data for the current upload.
+                        entry_by_code: dict[str, CourseEntry] = {
+                            normalize_course_code(e.course_code): e
+                            for e in unique_entries
+                        }
+                        refreshed: list[CourseResearchResult] = []
+                        for r in cached_response.results:
+                            entry = entry_by_code.get(normalize_course_code(r.course_code))
+                            if entry is not None:
+                                geocoded = enrich_meetings_with_geocode(list(entry.meetings))
+                                r = r.model_copy(update={"meetings": geocoded})
+                            refreshed.append(r)
+                        cached_fit = known.get("fit_evaluation")
+                        return cached_response.model_copy(update={
+                            "results": refreshed,
+                            "fit_evaluation": cached_fit,
+                        })
+                    else:
+                        stale = [
+                            r.course_code for r in cached_response.results
+                            if r.cache_id is None or r.error
+                        ]
+                        _log.info(
+                            "[fast-path] known_schedules snapshot stale for signature %s "
+                            "— missing/errored entries: %s — falling through",
+                            signature[:16], stale,
+                        )
+                except Exception as exc:
+                    _log.warning("[fast-path] known_schedules validation failed: %s", exc)
         except Exception as exc:
             _log.warning("[fast-path] known_schedules lookup failed: %s", exc)
     else:
@@ -407,10 +468,23 @@ async def research_courses(
     # --- Write known_schedules for future fast path (only when all courses cached) ---
     if signature is not None and all(r.cache_id is not None for r in results):
         try:
+            # Run fit analysis so the difficulty score is cached with the snapshot.
+            # This makes the score deterministic for the same set of courses and
+            # allows the frontend to skip the /api/fit-analysis Gemini call on hits.
+            fit_eval_dict: dict[str, Any] | None = None
+            try:
+                from app.services.fit_analysis import analyze_fit
+                fit_result = analyze_fit(list(results))
+                fit_eval_dict = fit_result.model_dump(mode="json")
+                _log.info("[fast-path] fit evaluation cached for signature %s", signature[:16])
+            except Exception as fit_exc:
+                _log.warning("[fast-path] fit evaluation failed, snapshot stored without it: %s", fit_exc)
+
             upsert_known_schedule(
                 cache_client,
                 signature=signature,
                 assembled_payload=response.model_dump(mode="json"),
+                fit_evaluation=fit_eval_dict,
             )
             _log.info("[fast-path] wrote known_schedules signature %s", signature[:16])
         except Exception as exc:

@@ -10,8 +10,9 @@ import {
   Star,
   Zap,
 } from "lucide-react";
-import type { ClassDossier, CourseLogistics, EvidenceItem } from "@/types/dossier";
+import type { ClassDossier, CourseLogistics, DossierEditPatch, EvidenceItem } from "@/types/dossier";
 import { ConflictBadge } from "@/components/dashboard/ConflictBadge";
+import { InlinePencilField } from "@/components/dashboard/InlinePencilField";
 import { getSunsetSummary } from "@/lib/mappers/courseEntryToDossier";
 import { isExamSection } from "@/lib/mappers/dossiersToScheduleItems";
 
@@ -28,6 +29,8 @@ type ClassCardProps = {
   onHover?: () => void;
   onHoverEnd?: () => void;
   onOpenDashboard?: () => void;
+  /** Called when user manually corrects a field. Changes are held in the workspace state until plan is saved. */
+  onUpdate?: (patch: DossierEditPatch) => void;
 };
 
 // ── Confidence bar color based on percentage ──────────────────────────────────
@@ -43,25 +46,25 @@ function confidenceGlow(pct: number): string {
   return "0 0 8px rgba(0,212,255,0.45)";
 }
 
-// ── Categorised attribute chips (Payments / Attendance) ──────────────────────
+// ── Stripe-style dot badge (no heavy pill border) ────────────────────────────
 type AttrChip = { label: string; tone: "amber" | "green" | "muted" };
 
-const ATTR_CHIP_STYLES: Record<AttrChip["tone"], string> = {
-  amber: "border-amber-500/30 bg-amber-900/30 text-amber-400",
-  green: "border-emerald-500/30 bg-emerald-900/20 text-emerald-400",
-  muted: "border-white/[0.08] bg-slate-800/60 text-slate-400",
+const DOT_COLOR: Record<AttrChip["tone"], string> = {
+  amber: "bg-amber-400",
+  green: "bg-emerald-400",
+  muted: "bg-white/20",
 };
 
-function Chip({ chip }: { chip: AttrChip }) {
+const LABEL_COLOR: Record<AttrChip["tone"], string> = {
+  amber: "text-amber-300/90",
+  green: "text-emerald-300/90",
+  muted: "text-white/50",
+};
+
+function DotBadge({ chip }: { chip: AttrChip }) {
   return (
-    <span
-      className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-semibold ${ATTR_CHIP_STYLES[chip.tone]}`}
-    >
-      <span
-        className={`h-1.5 w-1.5 shrink-0 rounded-full ${
-          chip.tone === "amber" ? "bg-amber-400" : chip.tone === "green" ? "bg-emerald-400" : "bg-white/20"
-        }`}
-      />
+    <span className={`inline-flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide ${LABEL_COLOR[chip.tone]}`}>
+      <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${DOT_COLOR[chip.tone]}`} />
       {chip.label}
     </span>
   );
@@ -70,38 +73,28 @@ function Chip({ chip }: { chip: AttrChip }) {
 function AttributeChips({ logistics }: { logistics: CourseLogistics | undefined }) {
   if (!logistics) return null;
 
-  const payments: AttrChip[] = [];
+  const chips: AttrChip[] = [];
+
   if (logistics.textbook_required === true)
-    payments.push({ label: "Textbook Required", tone: "amber" });
+    chips.push({ label: "Textbook required", tone: "amber" });
   else if (logistics.textbook_required === false)
-    payments.push({ label: "No Textbook", tone: "muted" });
+    chips.push({ label: "No textbook", tone: "muted" });
 
-  const attendance: AttrChip[] = [];
   if (logistics.attendance_required === true)
-    attendance.push({ label: "Attendance Mandatory", tone: "amber" });
+    chips.push({ label: "Attendance mandatory", tone: "amber" });
   else if (logistics.attendance_required === false)
-    attendance.push({ label: "Attendance Optional", tone: "muted" });
-  if (logistics.podcasts_available === true)
-    attendance.push({ label: "Podcasts Available", tone: "green" });
-  else if (logistics.podcasts_available === false)
-    attendance.push({ label: "No Podcasts", tone: "muted" });
+    chips.push({ label: "Attendance optional", tone: "muted" });
 
-  if (payments.length === 0 && attendance.length === 0) return null;
+  if (logistics.podcasts_available === true)
+    chips.push({ label: "Podcasts available", tone: "green" });
+  else if (logistics.podcasts_available === false)
+    chips.push({ label: "No podcasts", tone: "muted" });
+
+  if (chips.length === 0) return null;
 
   return (
-    <div className="space-y-1">
-      {payments.length > 0 && (
-        <div className="flex flex-wrap items-center gap-1.5">
-          <span className="w-16 shrink-0 text-[9px] font-medium text-hub-text-muted/60">Payments</span>
-          {payments.map((c) => <Chip key={c.label} chip={c} />)}
-        </div>
-      )}
-      {attendance.length > 0 && (
-        <div className="flex flex-wrap items-center gap-1.5">
-          <span className="w-20 shrink-0 text-[9px] font-medium text-hub-text-muted/60">Attendance</span>
-          {attendance.map((c) => <Chip key={c.label} chip={c} />)}
-        </div>
-      )}
+    <div className="flex flex-wrap gap-x-4 gap-y-1.5">
+      {chips.map((c) => <DotBadge key={c.label} chip={c} />)}
     </div>
   );
 }
@@ -199,6 +192,7 @@ function EvidenceCard({ item }: { item: EvidenceItem }) {
   );
 }
 
+
 // ── Grade breakdown strip ──────────────────────────────────────────────────────
 function GradeBreakdownStrip({ breakdown }: { breakdown: string | null | undefined }) {
   if (!breakdown) {
@@ -218,12 +212,12 @@ function GradeBreakdownStrip({ breakdown }: { breakdown: string | null | undefin
 
   return (
     <div className="rounded-lg border border-white/[0.06] bg-hub-bg/20 px-3 py-2">
-      <p className="mb-1.5 text-[9px] font-medium text-hub-text-muted/70">
+      <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-white/50">
         Grading
       </p>
       <div className="flex flex-wrap gap-x-3 gap-y-1">
         {segments.map((seg, i) => (
-          <span key={i} className="text-xs text-hub-text-secondary">
+          <span key={i} className="text-sm text-white/80">
             {seg}
           </span>
         ))}
@@ -252,7 +246,7 @@ function InlineQuote({ item }: { item: EvidenceItem }) {
           rel="noopener noreferrer"
           onClick={(e) => e.stopPropagation()}
           title={item.source}
-          className="mt-0.5 shrink-0 text-hub-text-muted/60 transition hover:text-hub-cyan"
+          className="mt-0.5 shrink-0 text-white/40 transition hover:text-hub-cyan"
         >
           <ExternalLink className="h-3 w-3" />
         </a>
@@ -261,7 +255,24 @@ function InlineQuote({ item }: { item: EvidenceItem }) {
   );
 }
 
-// ── SVG mini histogram for grade distribution ─────────────────────────────────
+// ── Fixed 4-group grade preview for card view ─────────────────────────────────
+// Always renders exactly A / B / C / D·F — fixed viewBox so every card is identical.
+const CARD_GRADE_GROUPS = [
+  { label: "A",   grades: ["A+","A","A-"],        color: "#21c1df" },
+  { label: "B",   grades: ["B+","B","B-"],        color: "#4f8dfd" },
+  { label: "C",   grades: ["C+","C","C-"],        color: "#a78bfa" },
+  { label: "D/F", grades: ["D+","D","D-","F"],    color: "#ff5578" },
+] as const;
+
+// Fixed SVG dimensions — always identical regardless of data
+const CG_BAR_W = 38;
+const CG_GAP   = 10;
+const CG_BAR_H = 56;
+const CG_LABEL_H = 14;
+const CG_PCT_H   = 13;
+const CG_SVG_W = CARD_GRADE_GROUPS.length * (CG_BAR_W + CG_GAP) - CG_GAP; // 194
+const CG_SVG_H = CG_PCT_H + CG_BAR_H + CG_LABEL_H;                        // 83
+
 function GradeHistogram({
   gradeCounts,
   sampleSize,
@@ -269,78 +280,73 @@ function GradeHistogram({
   gradeCounts: Record<string, number>;
   sampleSize: number;
 }) {
-  const ORDER = [
-    "A+","A","A-","B+","B","B-","C+","C","C-","D+","D","D-","F","P","NP","S","U","W","EW","I",
-  ];
-  const segments = ORDER.map((grade) => ({
-    grade,
-    count: gradeCounts[grade] ?? 0,
-    color: SUNSET_SEGMENT_COLORS[grade] ?? "#64748b",
-  })).filter((s) => s.count > 0);
+  if (!sampleSize) return null;
 
-  if (segments.length === 0) return null;
+  const groups = CARD_GRADE_GROUPS.map((g) => {
+    const count = g.grades.reduce((s, gr) => s + (gradeCounts[gr] ?? 0), 0);
+    return { label: g.label, color: g.color, count, pct: (count / sampleSize) * 100 };
+  });
 
-  const maxCount = Math.max(...segments.map((s) => s.count));
-  const BAR_H = 110;
-  const BAR_W = 20;
-  const GAP = 5;
-  const PCT_LABEL_H = 14;  // space above bar for % label
-  const GRADE_LABEL_H = 16; // space below bar for grade label
-  const svgW = segments.length * (BAR_W + GAP) - GAP;
-  const svgH = PCT_LABEL_H + BAR_H + GRADE_LABEL_H;
+  const maxPct = Math.max(...groups.map((g) => g.pct), 1);
+  const hasAny = groups.some((g) => g.count > 0);
+  if (!hasAny) return null;
 
   return (
-    <svg
-      viewBox={`0 0 ${svgW} ${svgH}`}
-      className="w-full"
-      aria-label="Grade distribution histogram"
-    >
-      {segments.map((seg, i) => {
-        const barH = Math.max((seg.count / maxCount) * BAR_H, 3);
-        const x = i * (BAR_W + GAP);
-        const barY = PCT_LABEL_H + (BAR_H - barH);
-        const pct = Math.round((seg.count / sampleSize) * 100);
-        return (
-          <g key={seg.grade}>
-            {/* Percentage label above bar — only show if ≥5% to avoid clutter */}
-            {pct >= 5 && (
-              <text
-                x={x + BAR_W / 2}
-                y={barY - 3}
-                textAnchor="middle"
-                fontSize={7}
-                fontWeight={600}
-                fill={seg.color}
-                fillOpacity={0.9}
+    <div className="rounded-lg border border-white/[0.06] bg-hub-bg/20 px-3 py-2.5">
+      <div className="flex items-center justify-between mb-1.5">
+        <p className="text-[10px] font-semibold uppercase tracking-wide text-white/40">
+          Grade distribution
+        </p>
+        <span className="text-[9px] text-white/30">{sampleSize} students</span>
+      </div>
+      <svg
+        viewBox={`0 0 ${CG_SVG_W} ${CG_SVG_H}`}
+        width={CG_SVG_W}
+        height={CG_SVG_H}
+        aria-label="Grade distribution preview"
+        className="block"
+      >
+        {groups.map((g, i) => {
+          const barH = Math.max((g.pct / maxPct) * CG_BAR_H, g.count > 0 ? 3 : 0);
+          const x = i * (CG_BAR_W + CG_GAP);
+          const barY = CG_PCT_H + (CG_BAR_H - barH);
+          const pctLabel = g.pct >= 1 ? `${Math.round(g.pct)}%` : "";
+          return (
+            <g key={g.label}>
+              {pctLabel && (
+                <text
+                  x={x + CG_BAR_W / 2}
+                  y={barY - 3}
+                  textAnchor="middle"
+                  fontSize={7}
+                  fontWeight={700}
+                  fill={g.color}
+                  fillOpacity={0.9}
+                >
+                  {pctLabel}
+                </text>
+              )}
+              <rect
+                x={x} y={barY}
+                width={CG_BAR_W} height={barH}
+                fill={g.color} fillOpacity={0.8} rx={3}
               >
-                {pct}%
+                <title>{g.label}: {Math.round(g.pct)}% ({g.count} students)</title>
+              </rect>
+              <text
+                x={x + CG_BAR_W / 2}
+                y={CG_SVG_H - 2}
+                textAnchor="middle"
+                fontSize={8}
+                fill="rgba(148,163,184,0.85)"
+              >
+                {g.label}
               </text>
-            )}
-            <rect
-              x={x}
-              y={barY}
-              width={BAR_W}
-              height={barH}
-              fill={seg.color}
-              fillOpacity={0.85}
-              rx={3}
-            >
-              <title>{seg.grade}: {pct}% ({seg.count} students)</title>
-            </rect>
-            {/* Grade label below bar */}
-            <text
-              x={x + BAR_W / 2}
-              y={svgH - 3}
-              textAnchor="middle"
-              fontSize={8}
-              fill="rgba(148,163,184,0.9)"
-            >
-              {seg.grade}
-            </text>
-          </g>
-        );
-      })}
-    </svg>
+            </g>
+          );
+        })}
+      </svg>
+    </div>
   );
 }
 
@@ -353,6 +359,7 @@ export function ClassCard({
   onHover,
   onHoverEnd,
   onOpenDashboard,
+  onUpdate,
 }: ClassCardProps) {
 
   const rmp = dossier.logistics?.rate_my_professor;
@@ -363,14 +370,6 @@ export function ClassCard({
       (sum, count) => sum + count,
       0,
     );
-  const sunsetPrimaryGroups = getPrimarySunsetGroups(
-    sunsetSummary?.grade_counts ?? {},
-    sunsetSampleSize,
-  );
-  const sunsetSegments = getSunsetSegments(
-    sunsetSummary?.grade_counts ?? {},
-    sunsetSampleSize,
-  );
   const hasSunsetSummary =
     sunsetSummary?.average_gpa != null ||
     sunsetSummary?.sample_size != null ||
@@ -406,7 +405,7 @@ export function ClassCard({
         onMouseEnter={onHover}
         onMouseLeave={onHoverEnd}
         onClick={onSelect}
-        className={`rounded-xl border bg-hub-surface/90 p-4 shadow-sm transition-colors duration-200 cursor-pointer
+        className={`rounded-xl border bg-hub-surface/90 p-4 shadow-sm transition-colors duration-200 cursor-pointer active:scale-[0.98]
           ${
             isSelected
               ? "border-hub-cyan/60 shadow-[0_0_0_1px_rgba(0,212,255,0.12),0_8px_32px_rgba(0,212,255,0.08)]"
@@ -429,7 +428,11 @@ export function ClassCard({
                   </span>
                 ) : null}
                 <span className="text-hub-text-muted font-normal text-sm">
-                  {dossier.courseTitle}
+                  <InlinePencilField
+                    value={dossier.courseTitle ?? ""}
+                    placeholder="Course title"
+                    onSave={(v) => onUpdate?.({ courseTitle: v })}
+                  />
                 </span>
               </h3>
               <div className="mt-1.5 flex items-center gap-2">
@@ -437,7 +440,11 @@ export function ClassCard({
                   {dossier.professorInitials}
                 </span>
                 <span className="text-sm text-hub-text-secondary">
-                  {dossier.professorName}
+                  <InlinePencilField
+                    value={dossier.professorName ?? ""}
+                    placeholder="Professor name"
+                    onSave={(v) => onUpdate?.({ professorName: v })}
+                  />
                 </span>
               </div>
             </div>
@@ -456,7 +463,7 @@ export function ClassCard({
                     e.stopPropagation();
                     onOpenDashboard?.();
                   }}
-                  className="flex items-center gap-1 rounded-lg border border-hub-cyan/30 bg-hub-cyan/10 px-3 py-1.5 text-xs font-semibold text-hub-cyan transition hover:bg-hub-cyan/20 hover:border-hub-cyan/50"
+                  className="flex items-center gap-1 rounded-lg border border-hub-cyan/30 bg-hub-cyan/10 px-3 py-1.5 text-xs font-semibold text-hub-cyan transition hover:bg-hub-cyan/20 hover:border-hub-cyan/50 hover:-translate-y-[1px] active:scale-[0.98]"
                 >
                   Course Details
                   <ChevronRight className="h-3 w-3" aria-hidden />
@@ -481,7 +488,7 @@ export function ClassCard({
                       {rmp.rating.toFixed(1)}
                     </span>
                   </div>
-                  <span className="text-[10px] text-hub-text-muted/70">Rating</span>
+                  <span className="text-[10px] text-white/50">Rating</span>
                 </div>
               )}
               {hasRmp && rmp.difficulty != null && (
@@ -494,7 +501,7 @@ export function ClassCard({
                         {rmp.difficulty.toFixed(1)}
                       </span>
                     </div>
-                    <span className="text-[10px] text-hub-text-muted/70">Difficulty</span>
+                    <span className="text-[10px] text-white/50">Difficulty</span>
                   </div>
                 </>
               )}
@@ -508,7 +515,7 @@ export function ClassCard({
                         {Math.round(rmp.would_take_again_percent)}%
                       </span>
                     </div>
-                    <span className="text-[10px] text-hub-text-muted/70">Retake</span>
+                    <span className="text-[10px] text-white/50">Retake</span>
                   </div>
                 </>
               )}
@@ -519,13 +526,18 @@ export function ClassCard({
                     <span className="text-base font-bold text-hub-cyan tabular-nums">
                       {sunsetSummary.average_gpa}
                     </span>
-                    <span className="text-[10px] text-hub-text-muted/70">
+                    <span className="text-[10px] text-white/50">
                       {dossier.sunsetGradeDistribution?.is_cross_course_fallback ? "Other GPA*" : "Avg GPA"}
                     </span>
                   </div>
                 </>
               )}
             </div>
+          )}
+
+          {/* Grade distribution histogram */}
+          {sunsetSampleSize > 0 && Object.keys(sunsetSummary?.grade_counts ?? {}).length > 0 && (
+            <GradeHistogram gradeCounts={sunsetSummary?.grade_counts ?? {}} sampleSize={sunsetSampleSize} />
           )}
 
           {/* Grade breakdown / course logistics strip */}
@@ -596,31 +608,6 @@ function sanitizeDashes(input: string) {
   return input.replace(/[–—]|--/g, ":");
 }
 
-type SunsetGroup = {
-  label: string;
-  color: string;
-  percent: number;
-  breakdown: string[];
-};
-
-type SunsetSegment = {
-  grade: string;
-  count: number;
-  percent: number;
-  color: string;
-};
-
-const SUNSET_GROUPS: Array<{
-  label: string;
-  grades: string[];
-  color: string;
-}> = [
-  { label: "A", grades: ["A+", "A", "A-"], color: "#26c6da" },
-  { label: "B", grades: ["B+", "B", "B-"], color: "#4f8dfd" },
-  { label: "C", grades: ["C+", "C", "C-"], color: "#8b5cf6" },
-  { label: "D/F", grades: ["D+", "D", "D-", "F"], color: "#ff4d73" },
-];
-
 const SUNSET_SEGMENT_COLORS: Record<string, string> = {
   "A+": "#21c1df",
   "A": "#20b6d9",
@@ -643,65 +630,3 @@ const SUNSET_SEGMENT_COLORS: Record<string, string> = {
   "EW": "#475569",
   "I": "#334155",
 };
-
-function formatPercent(percent: number) {
-  if (percent >= 10) return `${Math.round(percent)}%`;
-  if (percent >= 1) return `${percent.toFixed(1).replace(/\.0$/, "")}%`;
-  return `${percent.toFixed(1)}%`;
-}
-
-function getPrimarySunsetGroups(
-  gradeCounts: Record<string, number>,
-  sampleSize: number,
-): SunsetGroup[] {
-  if (!sampleSize) return [];
-
-  return SUNSET_GROUPS.map((group) => {
-    const breakdown = group.grades
-      .filter((grade) => (gradeCounts[grade] ?? 0) > 0)
-      .map(
-        (grade) =>
-          `${grade}: ${formatPercent(
-            ((gradeCounts[grade] ?? 0) / sampleSize) * 100,
-          )}`,
-      );
-
-    const total = group.grades.reduce(
-      (sum, grade) => sum + (gradeCounts[grade] ?? 0),
-      0,
-    );
-
-    return {
-      label: group.label,
-      color: group.color,
-      percent: (total / sampleSize) * 100,
-      breakdown,
-    };
-  }).filter((group) => group.percent > 0);
-}
-
-function getSunsetSegments(
-  gradeCounts: Record<string, number>,
-  sampleSize: number,
-): SunsetSegment[] {
-  if (!sampleSize) return [];
-
-  return Object.entries(gradeCounts)
-    .filter(([, count]) => count > 0)
-    .map(([grade, count]) => ({
-      grade,
-      count,
-      percent: (count / sampleSize) * 100,
-      color: SUNSET_SEGMENT_COLORS[grade] ?? "#64748b",
-    }))
-    .sort((a, b) => gradeSortIndex(a.grade) - gradeSortIndex(b.grade));
-}
-
-function gradeSortIndex(grade: string) {
-  const order = [
-    "A+","A","A-","B+","B","B-","C+","C","C-",
-    "D+","D","D-","F","P","NP","S","U","W","EW","I",
-  ];
-  const index = order.indexOf(grade);
-  return index === -1 ? order.length : index;
-}

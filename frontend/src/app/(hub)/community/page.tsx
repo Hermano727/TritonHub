@@ -32,12 +32,15 @@ export default async function CommunityPage() {
     courseCode: (row.course_code as string | null) ?? null,
     professorName: (row.professor_name as string | null) ?? null,
     isAnonymous: (row.is_anonymous as boolean) ?? false,
+    generalTags: (row.general_tags as string[]) ?? [],
     authorDisplayName: (row.author_display_name as string) ?? "Anonymous",
     createdAt: row.created_at as string,
     updatedAt: row.updated_at as string,
     replyCount: (row.reply_count as number) ?? 0,
     upvoteCount: (row.upvote_count as number) ?? 0,
+    downvoteCount: (row.downvote_count as number) ?? 0,
     userHasUpvoted: (row.user_has_upvoted as boolean) ?? false,
+    userHasDownvoted: (row.user_has_downvoted as boolean) ?? false,
   }));
 
   return <CommunityHub initialPosts={posts} initialTotal={count ?? 0} />;

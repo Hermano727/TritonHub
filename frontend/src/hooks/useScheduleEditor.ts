@@ -6,6 +6,8 @@ import type { ClassDossier, ScheduleCommitment } from "@/types/dossier";
 export type ScheduleSnapshot = {
   classes: ClassDossier[];
   commitments: ScheduleCommitment[];
+  /** Per-meeting display label overrides. Key: "${dossierId}:${meetingIdx}". Never mutates ClassDossier.courseCode. */
+  courseLabels?: Record<string, string>;
 };
 
 type EditorState = ScheduleSnapshot & {
@@ -18,11 +20,12 @@ function cloneSnap(s: ScheduleSnapshot): ScheduleSnapshot {
   return {
     classes: structuredClone(s.classes),
     commitments: structuredClone(s.commitments),
+    courseLabels: structuredClone(s.courseLabels ?? {}),
   };
 }
 
 type Action =
-  | { type: "HYDRATE"; payload: { classes: ClassDossier[]; commitments?: ScheduleCommitment[] } }
+  | { type: "HYDRATE"; payload: { classes: ClassDossier[]; commitments?: ScheduleCommitment[]; courseLabels?: Record<string, string> } }
   | { type: "APPLY"; payload: ScheduleSnapshot }
   | { type: "UNDO" }
   | { type: "REDO" }
@@ -35,16 +38,19 @@ function reducer(state: EditorState, action: Action): EditorState {
   const present: ScheduleSnapshot = {
     classes: state.classes,
     commitments: state.commitments,
+    courseLabels: state.courseLabels,
   };
 
   switch (action.type) {
     case "HYDRATE": {
-        const classes = structuredClone(action.payload.classes);
-        const commitments: ScheduleCommitment[] = structuredClone(action.payload.commitments ?? []);
-        const baseline = { classes: structuredClone(classes), commitments: structuredClone(commitments) };
+      const classes = structuredClone(action.payload.classes);
+      const commitments: ScheduleCommitment[] = structuredClone(action.payload.commitments ?? []);
+      const courseLabels: Record<string, string> = structuredClone(action.payload.courseLabels ?? {});
+      const baseline = { classes: structuredClone(classes), commitments: structuredClone(commitments), courseLabels: structuredClone(courseLabels) };
       return {
         classes,
         commitments,
+        courseLabels,
         baseline,
         past: [],
         future: [],
@@ -57,6 +63,7 @@ function reducer(state: EditorState, action: Action): EditorState {
         future: [],
         classes: structuredClone(action.payload.classes),
         commitments: structuredClone(action.payload.commitments),
+        courseLabels: structuredClone(action.payload.courseLabels ?? state.courseLabels ?? {}),
       };
     }
     case "ADD_COMMITMENT": {
@@ -92,6 +99,7 @@ function reducer(state: EditorState, action: Action): EditorState {
         ...state,
         classes: structuredClone(prev.classes),
         commitments: structuredClone(prev.commitments),
+        courseLabels: structuredClone(prev.courseLabels ?? {}),
         past: state.past.slice(0, -1),
         future: [cloneSnap(present), ...state.future],
       };
@@ -103,6 +111,7 @@ function reducer(state: EditorState, action: Action): EditorState {
         ...state,
         classes: structuredClone(next.classes),
         commitments: structuredClone(next.commitments),
+        courseLabels: structuredClone(next.courseLabels ?? {}),
         past: [...state.past, cloneSnap(present)],
         future: state.future.slice(1),
       };
@@ -114,6 +123,7 @@ function reducer(state: EditorState, action: Action): EditorState {
         future: [],
         classes: structuredClone(state.baseline.classes),
         commitments: structuredClone(state.baseline.commitments),
+        courseLabels: structuredClone(state.baseline.courseLabels ?? {}),
       };
     }
     default:
@@ -126,7 +136,8 @@ function initialEditor(classes: ClassDossier[]): EditorState {
   return {
     classes: c,
     commitments: [],
-    baseline: { classes: structuredClone(c), commitments: [] },
+    courseLabels: {},
+    baseline: { classes: structuredClone(c), commitments: [], courseLabels: {} },
     past: [],
     future: [],
   };
@@ -199,6 +210,7 @@ export function useScheduleEditor(
   return {
     classes: state.classes,
     commitments: state.commitments,
+    courseLabels: state.courseLabels ?? {},
     baseline: state.baseline,
     apply,
     undo,

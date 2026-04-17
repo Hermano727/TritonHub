@@ -7,9 +7,9 @@ import type { ScheduleEvaluation } from "@/types/dossier";
 
 function scoreColor(score: number, max: number): string {
   const pct = score / max;
-  if (pct <= 0.4) return "#5eead4";
-  if (pct <= 0.65) return "#e3b12f";
-  return "#ff6b6b";
+  if (pct <= 0.4) return "#4dd9c0"; // desaturated success
+  if (pct <= 0.65) return "#d4a520"; // desaturated gold
+  return "#f05a5a"; // desaturated danger
 }
 
 function trendBadgeClass(score: number, max: number): string {
@@ -67,9 +67,9 @@ function HudInfoTooltip({ text }: { text: string }) {
   );
 }
 
-type Props = { evaluation: ScheduleEvaluation };
+type Props = { evaluation: ScheduleEvaluation; isHero?: boolean };
 
-export function DifficultyScoreHud({ evaluation }: Props) {
+export function DifficultyScoreHud({ evaluation, isHero = false }: Props) {
   const reduce = useReducedMotion();
   const displayScore = useCountUp(evaluation.fitnessScore);
   const color = scoreColor(evaluation.fitnessScore, evaluation.fitnessMax);
@@ -81,7 +81,7 @@ export function DifficultyScoreHud({ evaluation }: Props) {
       {/* Header */}
       <div className="flex items-center justify-between border-b border-white/[0.06] px-4 py-3">
         <div className="flex items-center gap-2">
-          <h2 className="font-[family-name:var(--font-outfit)] text-sm font-semibold text-hub-text-secondary">
+          <h2 className={`font-[family-name:var(--font-outfit)] font-semibold text-white/90 ${isHero ? "text-base" : "text-sm"}`}>
             Difficulty score
           </h2>
           <HudInfoTooltip text="Commute · density · employment — 1 = easy, 10 = very hard" />
@@ -91,12 +91,12 @@ export function DifficultyScoreHud({ evaluation }: Props) {
         </span>
       </div>
 
-      {/* Body: score digit | category bars */}
+      {/* Body: score digit | category sparklines */}
       <div className="flex items-stretch">
         {/* Score */}
-        <div className="flex w-36 shrink-0 flex-col items-start justify-center gap-1 px-4 py-5">
+        <div className={`flex shrink-0 flex-col items-start justify-center gap-1 ${isHero ? "w-52 px-8 py-8" : "w-36 px-4 py-5"}`}>
           <motion.span
-            className="font-[family-name:var(--font-outfit)] text-5xl font-bold tabular-nums leading-none"
+            className={`font-[family-name:var(--font-outfit)] font-bold tabular-nums leading-none ${isHero ? "text-8xl" : "text-5xl"}`}
             style={{ color }}
             initial={reduce ? false : { opacity: 0, scale: 0.75 }}
             animate={{ opacity: 1, scale: 1 }}
@@ -104,22 +104,25 @@ export function DifficultyScoreHud({ evaluation }: Props) {
           >
             {displayScore.toFixed(1)}
           </motion.span>
-          <span className="text-xs text-hub-text-muted">out of {evaluation.fitnessMax}</span>
+          <span className="text-[10px] font-semibold uppercase tracking-widest text-white/40">out of {evaluation.fitnessMax}</span>
         </div>
 
         {/* Separator */}
         <div className="w-px shrink-0 bg-white/[0.06]" />
 
-        {/* Category bars */}
+        {/* Category sparklines — 2px Stripe-style */}
         {cats.length > 0 && (
-          <div className="flex flex-1 flex-col justify-center gap-3 px-5 py-5">
+          <div className={`flex flex-1 flex-col justify-center ${isHero ? "gap-5 px-8 py-8" : "gap-3.5 px-5 py-5"}`}>
             {cats.map((cat, i) => (
               <div key={cat.label} className="flex items-center gap-3">
-                <span className="w-24 shrink-0 text-xs text-hub-text-secondary">{cat.label}</span>
-                <div className="relative h-2 flex-1 overflow-hidden rounded-full bg-white/[0.07]">
+                <span className="w-24 shrink-0 text-[10px] font-semibold uppercase tracking-widest text-white/40">{cat.label}</span>
+                <div className="relative h-[2px] flex-1 overflow-hidden rounded-full bg-white/[0.07]">
                   <motion.div
                     className="absolute inset-y-0 left-0 rounded-full"
-                    style={{ backgroundColor: cat.color }}
+                    style={{
+                      backgroundColor: cat.color,
+                      boxShadow: `0 0 6px ${cat.color}60`,
+                    }}
                     initial={reduce ? false : { width: 0 }}
                     animate={{ width: `${(cat.score / cat.max) * 100}%` }}
                     transition={{ duration: 0.7, delay: 0.1 + i * 0.08, ease: [0.22, 1, 0.36, 1] }}
@@ -137,7 +140,7 @@ export function DifficultyScoreHud({ evaluation }: Props) {
         )}
       </div>
 
-      {/* Alerts — all shown, wrapping */}
+      {/* Alerts */}
       {evaluation.alerts.length > 0 && (
         <div className="flex flex-wrap gap-2 border-t border-white/[0.05] px-4 py-3">
           {evaluation.alerts.map((a) => (
@@ -161,16 +164,19 @@ export function DifficultyScoreHud({ evaluation }: Props) {
         </div>
       )}
 
-      {/* Advisor bullets */}
+      {/* Advisor note — left-border section, no background box */}
       {bullets.length > 0 && (
-        <div className="border-t border-white/[0.05] px-4 py-3">
-          <p className="mb-2 text-[10px] font-semibold uppercase tracking-[0.12em] text-hub-text-secondary">
-            Advisor
+        <div className="border-t border-white/[0.05] px-6 py-5">
+          <p className="mb-3 text-[10px] font-semibold uppercase tracking-widest text-white/40">
+            Advisor note
           </p>
-          <ul className="space-y-1.5">
+          <ul className="max-w-[65ch] space-y-3 border-l-2 border-hub-cyan/20 pl-4">
             {bullets.map((b, i) => (
-              <li key={i} className="flex items-start gap-2 text-xs leading-relaxed text-hub-text-secondary">
-                <span className="mt-[5px] h-1.5 w-1.5 shrink-0 rounded-full bg-hub-cyan/70" aria-hidden />
+              <li
+                key={i}
+                className="text-[13px] text-white/80"
+                style={{ lineHeight: 1.65 }}
+              >
                 {b}.
               </li>
             ))}

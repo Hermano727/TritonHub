@@ -11,7 +11,7 @@ type TritonMarkProps = {
 function IconImage({ className }: { className?: string }) {
   return (
     <img
-      src="/images/reg2schedg_full_icon.png"
+      src="/images/reg2schedg_64x64icon.png"
       alt="Reg2Schedg"
       className={className}
       aria-hidden

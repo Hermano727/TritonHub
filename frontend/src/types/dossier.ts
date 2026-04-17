@@ -1,5 +1,20 @@
 export type UiPhase = "idle" | "processing" | "dashboard";
 
+export type TransitProfile = "walking" | "biking" | "spin" | "car";
+export type PriorityType = "career" | "research" | "interest" | "grad_school";
+export type SkillFocus = "project" | "theoretical" | "mixed";
+
+export type ScheduleBriefing = {
+  scheduleTitle: string;
+  priority: PriorityType;
+  balancedDifficulty: boolean;
+  skillFocus: SkillFocus;
+  transitProfile: TransitProfile;
+  careerGoals?: string;
+  currentWorries?: string;
+  externalCommitments?: string;
+};
+
 export type AlertSeverity = "critical" | "warning" | "info";
 
 export interface QuarterRef {
@@ -171,6 +186,23 @@ export interface TransitionInsight {
   gapMinutes: number;
   risk: "safe" | "tight" | "impossible";
   detail: string;
+}
+
+/**
+ * Subset of ClassDossier fields that users can manually correct.
+ * Applied client-side only; persisted when the user saves their plan.
+ * Designed to be extended when document-upload (syllabus parsing) is added.
+ */
+export interface DossierEditPatch {
+  courseTitle?: string;
+  professorName?: string;
+  /** Partial override of CourseLogistics — only the correctable fields. */
+  logistics?: {
+    grade_breakdown?: string | null;
+    attendance_required?: boolean | null;
+    textbook_required?: boolean | null;
+    podcasts_available?: boolean | null;
+  };
 }
 
 export interface MockDossierPayload {

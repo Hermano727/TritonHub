@@ -6,6 +6,7 @@ import {
   ChevronLeft,
   ChevronRight,
   ExternalLink,
+  FileUp,
   HelpCircle,
   Info,
   RotateCcw,
@@ -13,7 +14,8 @@ import {
   X,
   Zap,
 } from "lucide-react";
-import type { ClassDossier, CourseLogistics, EvidenceItem } from "@/types/dossier";
+import type { ClassDossier, CourseLogistics, DossierEditPatch, EvidenceItem } from "@/types/dossier";
+import { InlinePencilField } from "@/components/dashboard/InlinePencilField";
 import { getSunsetSummary } from "@/lib/mappers/courseEntryToDossier";
 import { isExamSection } from "@/lib/mappers/dossiersToScheduleItems";
 
@@ -94,44 +96,64 @@ const GRADE_GROUPS = [
   { label: "D/F", grades: ["D+","D","D-","F"], color: "#ff4d73" },
 ];
 
+// Fixed-width histogram: always renders every GRADE_ORDER slot so width never changes.
+const MH_BAR_W = 22;
+const MH_GAP   = 4;
+const MH_BAR_H = 80;
+const MH_LABEL_H = 14;
+const MH_SVG_W = GRADE_ORDER.length * (MH_BAR_W + MH_GAP) - MH_GAP;
+const MH_SVG_H = MH_BAR_H + MH_LABEL_H + 4;
+
 function GradeHistogram({ gradeCounts, sampleSize }: { gradeCounts: Record<string, number>; sampleSize: number }) {
   const reduce = useReducedMotion();
-  const segs = GRADE_ORDER
-    .map((g) => ({ grade: g, count: gradeCounts[g] ?? 0, color: GRADE_COLORS[g] ?? "#64748b" }))
-    .filter((s) => s.count > 0);
-  if (segs.length === 0) return null;
+  const segs = GRADE_ORDER.map((g) => ({
+    grade: g,
+    count: gradeCounts[g] ?? 0,
+    color: GRADE_COLORS[g] ?? "#64748b",
+  }));
 
-  const maxCount = Math.max(...segs.map((s) => s.count));
-  const BAR_W = 22;
-  const GAP = 4;
-  const BAR_H = 80;
-  const LABEL_H = 14;
-  const svgW = segs.length * (BAR_W + GAP) - GAP;
-  const svgH = BAR_H + LABEL_H + 4;
+  const maxCount = Math.max(...segs.map((s) => s.count), 1);
+  const hasAny = segs.some((s) => s.count > 0);
+  if (!hasAny) return null;
 
   return (
-    <svg viewBox={`0 0 ${svgW} ${svgH}`} className="w-full" aria-label="Grade distribution histogram">
+    <svg
+      viewBox={`0 0 ${MH_SVG_W} ${MH_SVG_H}`}
+      width={MH_SVG_W}
+      height={MH_SVG_H}
+      aria-label="Grade distribution histogram"
+      className="block w-full max-w-full"
+    >
       {segs.map((seg, i) => {
-        const barH = Math.max((seg.count / maxCount) * BAR_H, 3);
-        const x = i * (BAR_W + GAP);
-        const barY = BAR_H - barH;
+        const barH = seg.count > 0 ? Math.max((seg.count / maxCount) * MH_BAR_H, 3) : 0;
+        const x = i * (MH_BAR_W + MH_GAP);
+        const barY = MH_BAR_H - barH;
         const pct = Math.round((seg.count / sampleSize) * 100);
         return (
           <g key={seg.grade}>
-            <motion.rect
-              x={x}
-              width={BAR_W}
-              fill={seg.color}
-              fillOpacity={0.8}
-              rx={3}
-              initial={reduce ? undefined : { height: 0, y: BAR_H }}
-              animate={{ height: barH, y: barY }}
-              transition={{ duration: 0.55, ease: [0.22, 1, 0.36, 1], delay: 0.1 + i * 0.025 }}
+            {seg.count > 0 && (
+              <motion.rect
+                x={x}
+                width={MH_BAR_W}
+                fill={seg.color}
+                fillOpacity={0.8}
+                rx={3}
+                initial={reduce ? undefined : { height: 0, y: MH_BAR_H }}
+                animate={{ height: barH, y: barY }}
+                transition={{ duration: 0.55, ease: [0.22, 1, 0.36, 1], delay: 0.1 + i * 0.025 }}
+              >
+                <title>{seg.grade}: {pct}% ({seg.count} students)</title>
+              </motion.rect>
+            )}
+            <text
+              x={x + MH_BAR_W / 2}
+              y={MH_SVG_H - 2}
+              textAnchor="middle"
+              fontSize={8}
+              fill={seg.count > 0 ? "rgba(148,163,184,0.85)" : "rgba(148,163,184,0.25)"}
             >
-              <title>{seg.grade}: {pct}% ({seg.count} students)</title>
-            </motion.rect>
-            <text x={x + BAR_W / 2} y={svgH - 2} textAnchor="middle"
-              fontSize={8} fill="rgba(148,163,184,0.85)">{seg.grade}</text>
+              {seg.grade}
+            </text>
           </g>
         );
       })}
@@ -226,9 +248,11 @@ type Props = {
   openIndex: number | null;
   onClose: () => void;
   onNavigate: (index: number) => void;
+  /** Called when user manually corrects a field. Changes held in workspace state until plan is saved. */
+  onUpdate?: (dossierId: string, patch: DossierEditPatch) => void;
 };
 
-export function DossierDashboardModal({ dossiers, openIndex, onClose, onNavigate }: Props) {
+export function DossierDashboardModal({ dossiers, openIndex, onClose, onNavigate, onUpdate }: Props) {
   const isOpen = openIndex !== null;
   const dossier = openIndex !== null ? dossiers[openIndex] : null;
   const total = dossiers.length;
@@ -306,6 +330,7 @@ export function DossierDashboardModal({ dossiers, openIndex, onClose, onNavigate
               total={total}
               onClose={onClose}
               onNavigate={onNavigate}
+              onUpdate={onUpdate ? (patch) => onUpdate(dossier.id, patch) : undefined}
             />
           </motion.div>
         </motion.div>
@@ -316,18 +341,57 @@ export function DossierDashboardModal({ dossiers, openIndex, onClose, onNavigate
 
 // ── Dashboard content (keyed for animation between courses) ──────────────────
 
+// ── Tristate boolean toggle (null / true / false) ─────────────────────────────
+
+function TristateToggle({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: boolean | null;
+  onChange: (v: boolean | null) => void;
+}) {
+  const cycle = () => {
+    if (value === null) onChange(true);
+    else if (value === true) onChange(false);
+    else onChange(null);
+  };
+
+  const display =
+    value === true ? { text: "Yes", cls: "border-emerald-500/30 bg-emerald-900/20 text-emerald-400" } :
+    value === false ? { text: "No", cls: "border-red-500/20 bg-red-900/10 text-red-400" } :
+    { text: "Unknown", cls: "border-white/[0.1] bg-white/[0.04] text-hub-text-muted" };
+
+  return (
+    <div className="flex items-center justify-between gap-3 py-1">
+      <span className="text-xs text-hub-text-secondary">{label}</span>
+      <button
+        type="button"
+        onClick={cycle}
+        title="Click to cycle: Yes → No → Unknown"
+        className={`rounded-full border px-2.5 py-0.5 text-[10px] font-semibold transition hover:opacity-80 ${display.cls}`}
+      >
+        {display.text}
+      </button>
+    </div>
+  );
+}
+
 function DashboardContent({
   dossier,
   index,
   total,
   onClose,
   onNavigate,
+  onUpdate,
 }: {
   dossier: ClassDossier;
   index: number;
   total: number;
   onClose: () => void;
   onNavigate: (i: number) => void;
+  onUpdate?: (patch: DossierEditPatch) => void;
 }) {
   const reduce = useReducedMotion();
   const log = dossier.logistics;
@@ -375,13 +439,25 @@ function DashboardContent({
                 Remote
               </span>
             )}
-            <span className="text-sm font-normal text-hub-text-muted">{dossier.courseTitle}</span>
+            <span className="text-sm font-normal text-hub-text-muted">
+              <InlinePencilField
+                value={dossier.courseTitle ?? ""}
+                placeholder="Course title"
+                onSave={(v) => onUpdate?.({ courseTitle: v })}
+              />
+            </span>
           </div>
           <div className="mt-1.5 flex items-center gap-2">
             <span className="flex h-6 w-6 items-center justify-center rounded-full border border-hub-cyan/30 bg-hub-cyan/10 text-[10px] font-bold text-hub-cyan">
               {dossier.professorInitials}
             </span>
-            <span className="text-sm text-hub-text-secondary">{dossier.professorName}</span>
+            <span className="text-sm text-hub-text-secondary">
+              <InlinePencilField
+                value={dossier.professorName ?? ""}
+                placeholder="Professor name"
+                onSave={(v) => onUpdate?.({ professorName: v })}
+              />
+            </span>
             {!professorInfoFound && (
               <span className="flex items-center gap-1 rounded-full border border-amber-500/25 bg-amber-900/15 px-2 py-0.5 text-[9px] font-semibold text-amber-400">
                 <Info className="h-2.5 w-2.5" /> No specific data found
@@ -391,6 +467,21 @@ function DashboardContent({
         </div>
 
         <div className="flex shrink-0 items-center gap-3">
+          {/* Upload syllabus — future feature placeholder */}
+          <div className="relative group/syllabus">
+            <button
+              type="button"
+              disabled
+              className="flex items-center gap-1.5 rounded-lg border border-white/[0.07] bg-white/[0.03] px-2.5 py-1.5 text-[11px] font-medium text-hub-text-muted/50 cursor-not-allowed"
+            >
+              <FileUp className="h-3.5 w-3.5 shrink-0" aria-hidden />
+              Upload syllabus
+            </button>
+            <div className="pointer-events-none absolute right-0 top-full mt-1.5 z-10 w-52 rounded-lg border border-white/[0.08] bg-[#0d1b2e] px-3 py-2 text-[10px] leading-relaxed text-hub-text-muted opacity-0 transition-opacity group-hover/syllabus:opacity-100">
+              <span className="mb-1 block font-semibold text-hub-cyan/70">Coming soon</span>
+              Upload a course syllabus to auto-fill grading scheme, attendance policy, and other logistics.
+            </div>
+          </div>
           {/* Course dots — clickable navigation */}
           {total > 1 && (
             <div className="flex items-center gap-1.5">
@@ -669,20 +760,19 @@ function DashboardContent({
           <div className="border-t border-white/[0.06] px-5 pb-5">
             <div className="grid grid-cols-1 gap-4 pt-4 md:grid-cols-2">
 
-              {/* Grade breakdown */}
+              {/* Grade breakdown — editable */}
               <div className="rounded-xl border border-white/[0.07] bg-[#0d1b2e] px-4 py-3">
                 <p className="mb-2 text-[10px] font-semibold text-hub-text-muted">
                   Grading
                 </p>
-                {log?.grade_breakdown ? (
-                  <div className="flex flex-wrap gap-x-4 gap-y-1">
-                    {log.grade_breakdown.split(/[,;]/).map((s) => s.trim()).filter(Boolean).map((seg, i) => (
-                      <span key={i} className="text-xs text-hub-text-secondary">{seg}</span>
-                    ))}
-                  </div>
-                ) : (
-                  <p className="text-xs text-hub-text-muted/60">Grade breakdown not found</p>
-                )}
+                <div className="text-xs text-hub-text-secondary">
+                  <InlinePencilField
+                    value={log?.grade_breakdown ?? ""}
+                    placeholder="e.g. Homework 30%, Midterm 30%, Final 40%"
+                    onSave={(v) => onUpdate?.({ logistics: { grade_breakdown: v || null } })}
+                    multiline
+                  />
+                </div>
                 {/* Course page link */}
                 {log?.course_webpage_url && (
                   <a href={log.course_webpage_url} target="_blank" rel="noopener noreferrer"
@@ -692,12 +782,33 @@ function DashboardContent({
                 )}
               </div>
 
-              {/* Attribute pills */}
+              {/* Course attributes — editable toggles */}
               <div className="rounded-xl border border-white/[0.07] bg-[#0d1b2e] px-4 py-3">
                 <p className="mb-2 text-[10px] font-semibold text-hub-text-muted">
                   Course attributes
+                  {onUpdate && (
+                    <span className="ml-2 text-hub-text-muted/50">· click to correct</span>
+                  )}
                 </p>
-                {logPills.length > 0 ? (
+                {onUpdate ? (
+                  <div className="divide-y divide-white/[0.04]">
+                    <TristateToggle
+                      label="Attendance required"
+                      value={log?.attendance_required ?? null}
+                      onChange={(v) => onUpdate({ logistics: { attendance_required: v } })}
+                    />
+                    <TristateToggle
+                      label="Textbook required"
+                      value={log?.textbook_required ?? null}
+                      onChange={(v) => onUpdate({ logistics: { textbook_required: v } })}
+                    />
+                    <TristateToggle
+                      label="Podcasts available"
+                      value={log?.podcasts_available ?? null}
+                      onChange={(v) => onUpdate({ logistics: { podcasts_available: v } })}
+                    />
+                  </div>
+                ) : logPills.length > 0 ? (
                   <div className="flex flex-wrap gap-1.5">
                     {logPills.map((p) => (
                       <LogisticPill key={p.label} label={p.label} tone={p.tone} />

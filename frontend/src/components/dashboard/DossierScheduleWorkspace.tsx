@@ -12,7 +12,7 @@ import {
   type ReactNode,
 } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { CalendarDays, LayoutGrid, Maximize2, X } from "lucide-react";
+import { CalendarDays, LayoutGrid, Maximize2, Map as MapIcon, BarChart2, Layers, Minimize2, X } from "lucide-react";
 import { isExamSection } from "@/lib/mappers/dossiersToScheduleItems";
 import { ClassCard } from "@/components/dashboard/ClassCard";
 import { DossierDashboardModal } from "@/components/dashboard/DossierDashboardModal";
@@ -28,8 +28,8 @@ import { COMMITMENT_PRESETS } from "@/components/dashboard/commitmentPresets";
 import { WeeklyCalendar, type CourseBlock, type CommitmentBlock, COL_TO_DAY, parseDaysToCols, removeDayFromString, minutesToTimeStr, minutesToTimeInput } from "@/components/dashboard/WeeklyCalendar";
 import { useCalendarSyncHandler } from "@/components/layout/calendar-sync-context";
 import { useCalendarState } from "@/components/layout/calendar-state-context";
-import { useScheduleEditor, useScheduleFingerprint } from "@/hooks/useScheduleEditor";
-import type { ClassDossier, ScheduleCommitment, ScheduleEvaluation, ScheduleItem, TransitionInsight } from "@/types/dossier";
+import { useScheduleEditor } from "@/hooks/useScheduleEditor";
+import type { ClassDossier, DossierEditPatch, ScheduleCommitment, ScheduleEvaluation, ScheduleItem, TransitionInsight, TransitProfile } from "@/types/dossier";
 
 function isDossierRemoteOnly(dossier: ClassDossier): boolean {
   const regular = dossier.meetings.filter((m) => !isExamSection(m.section_type));
@@ -60,11 +60,117 @@ function minutesFromTimeInput(iso: string): number | null {
   return h * 60 + m;
 }
 
+function haversineDistanceMiles(lat1: number, lng1: number, lat2: number, lng2: number): number {
+  const R = 3958.8; // Earth radius in miles
+  const dLat = ((lat2 - lat1) * Math.PI) / 180;
+  const dLng = ((lng2 - lng1) * Math.PI) / 180;
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos((lat1 * Math.PI) / 180) * Math.cos((lat2 * Math.PI) / 180) * Math.sin(dLng / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+type WalkAdvisory = { key: string; message: string };
+
+function parseMinutesFromAmPm(t: string): number | null {
+  const m = t.match(/^(\d+):(\d+)\s*(AM|PM)$/i);
+  if (!m) return null;
+  let h = parseInt(m[1], 10);
+  const min = parseInt(m[2], 10);
+  const period = m[3].toUpperCase();
+  if (period === "PM" && h !== 12) h += 12;
+  if (period === "AM" && h === 12) h = 0;
+  return h * 60 + min;
+}
+
+function computeWalkAdvisories(classes: ClassDossier[]): WalkAdvisory[] {
+  // Collect all meetings with resolved lat/lng and a parseable end_time
+  type MeetingInfo = {
+    courseCode: string;
+    locationName: string;
+    day: string;
+    startMin: number;
+    endMin: number;
+    lat: number;
+    lng: number;
+  };
+  const meetings: MeetingInfo[] = [];
+  for (const c of classes) {
+    for (const m of c.meetings) {
+      if (!m.lat || !m.lng || m.geocode_status === "unresolved") continue;
+      const start = parseMinutesFromAmPm(m.start_time);
+      const end = parseMinutesFromAmPm(m.end_time);
+      if (start === null || end === null) continue;
+      const days = m.days ? m.days.split("") : [];
+      // Flatten by day so we can sort per-day
+      const parsedDays: string[] = [];
+      let i = 0;
+      while (i < m.days.length) {
+        if (i + 1 < m.days.length && ["Tu", "Th", "Sa", "Su"].includes(m.days.slice(i, i + 2))) {
+          parsedDays.push(m.days.slice(i, i + 2));
+          i += 2;
+        } else {
+          parsedDays.push(m.days[i]);
+          i += 1;
+        }
+      }
+      for (const day of parsedDays) {
+        meetings.push({
+          courseCode: c.courseCode,
+          locationName: m.buildingDisplayName ?? m.location ?? m.building_code ?? "Unknown",
+          day,
+          startMin: start,
+          endMin: end,
+          lat: m.lat,
+          lng: m.lng,
+        });
+      }
+    }
+  }
+
+  // Group by day, sort by start time, check back-to-back gaps
+  const byDay = new Map<string, MeetingInfo[]>();
+  for (const m of meetings) {
+    const list = byDay.get(m.day) ?? [];
+    list.push(m);
+    byDay.set(m.day, list);
+  }
+
+  const advisories: WalkAdvisory[] = [];
+  for (const list of byDay.values()) {
+    list.sort((a, b) => a.startMin - b.startMin);
+    for (let i = 0; i < list.length - 1; i++) {
+      const a = list[i];
+      const b = list[i + 1];
+      // Only flag if gap between classes is ≤ 20 minutes (potentially tight)
+      const gapMin = b.startMin - a.endMin;
+      if (gapMin > 20) continue;
+      const dist = haversineDistanceMiles(a.lat, a.lng, b.lat, b.lng);
+      if (dist > 0.5) {
+        advisories.push({
+          key: `${a.courseCode}-${b.courseCode}-${a.day}`,
+          message: `Logistics Note: ${a.locationName} → ${b.locationName} (${dist.toFixed(1)} mi, ${gapMin} min gap). Verify if attendance is mandatory or tardiness is acceptable.`,
+        });
+      }
+    }
+  }
+  return advisories;
+}
+
 type MainTab = "dossier" | "schedule";
+type WorkspacePhase = "overview" | "dossiers" | "logistics" | "review";
+
+const PHASES: { id: WorkspacePhase; label: string; icon: typeof BarChart2; description: string }[] = [
+  { id: "overview", label: "Overview", icon: BarChart2, description: "Difficulty analysis" },
+  { id: "dossiers", label: "Courses", icon: LayoutGrid, description: "Deep dive" },
+  { id: "logistics", label: "Logistics", icon: MapIcon, description: "Map & schedule" },
+  { id: "review", label: "Review", icon: Layers, description: "Full dashboard" },
+];
 
 export type DossierScheduleWorkspaceHandle = {
   getCurrentClasses: () => ClassDossier[];
   getCurrentCommitments: () => ScheduleCommitment[];
+  isDirty: boolean;
 };
 
 type Props = {
@@ -75,7 +181,20 @@ type Props = {
   transitionInsights?: TransitionInsight[];
   calendarHeaderActions?: ReactNode;
   initialCommitments?: ScheduleCommitment[];
+  // Save flow
+  onSave?: () => Promise<void>;
+  isSaving?: boolean;
+  lastSavedAt?: Date | null;
+  saveError?: string | null;
+  showSavePrompt?: boolean;
+  onSavePromptDismiss?: () => void;
+  // Personalization
+  transitProfile?: TransitProfile;
 };
+
+function formatSaveTime(d: Date): string {
+  return d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+}
 
 export const DossierScheduleWorkspace = forwardRef(function DossierScheduleWorkspace(
   {
@@ -86,30 +205,70 @@ export const DossierScheduleWorkspace = forwardRef(function DossierScheduleWorks
     transitionInsights = [],
     calendarHeaderActions,
     initialCommitments = [],
+    onSave,
+    isSaving = false,
+    lastSavedAt,
+    saveError,
+    showSavePrompt = false,
+    onSavePromptDismiss,
+    transitProfile,
   }: Props,
   ref: React.Ref<DossierScheduleWorkspaceHandle | null>,
 ) {
-  const fingerprint = useScheduleFingerprint(viewClasses);
-  const fullKey = `${hydrateKey}|${fingerprint}`;
-
+  // hydrateKey (= "${activePlanId}:${authed}") is the sole trigger for re-hydration.
+  // We intentionally do NOT append a fingerprint here — viewClasses changes after a save
+  // (usePlanSync refreshes remotePlans) must NOT wipe the editor state.
+  // For v2 plans the workspace is unmounted during loading, so fresh-mount initialisation
+  // from useReducer's initialiser function handles the "data just arrived" case correctly.
   const {
-    classes, commitments, apply, undo, redo, resetToBaseline,
+    classes, commitments, courseLabels, apply, undo, redo, resetToBaseline,
     addCommitment, removeCommitment, editCommitment,
     canUndo, canRedo, isDirty,
-  } = useScheduleEditor(viewClasses, fullKey, initialCommitments);
+  } = useScheduleEditor(viewClasses, hydrateKey, initialCommitments);
 
   useImperativeHandle(ref, () => ({
     getCurrentClasses: () => classes,
     getCurrentCommitments: () => commitments,
-  }), [classes, commitments]);
+    isDirty,
+  }), [classes, commitments, isDirty]);
+
+  /** Apply a user-supplied correction to a dossier field. Held in editor state until plan is saved. */
+  const onUpdateDossier = useCallback((dossierId: string, patch: DossierEditPatch) => {
+    const updatedClasses = classes.map((c): ClassDossier => {
+      if (c.id !== dossierId) return c;
+      return {
+        ...c,
+        ...(patch.courseTitle != null ? { courseTitle: patch.courseTitle } : {}),
+        ...(patch.professorName != null ? { professorName: patch.professorName } : {}),
+        ...(patch.logistics != null
+          ? { logistics: c.logistics ? { ...c.logistics, ...patch.logistics } : (patch.logistics as ClassDossier["logistics"]) }
+          : {}),
+      };
+    });
+    apply({ classes: updatedClasses, commitments, courseLabels });
+  }, [apply, classes, commitments, courseLabels]);
 
   const [mainTab, setMainTab] = useState<MainTab>("dossier");
+  const [currentPhase, setCurrentPhase] = useState<WorkspacePhase>("overview");
+
+  // Reset UI state whenever the active plan changes so switching plans
+  // always lands on Overview rather than whatever phase the previous plan was on.
+  useEffect(() => {
+    setCurrentPhase("overview");
+    setMainTab("dossier");
+  }, [hydrateKey]);
   const [fullscreenOpen, setFullscreenOpen] = useState(false);
+  const [mapFullscreen, setMapFullscreen] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
   const [hoveredClassId, setHoveredClassId] = useState<string | null>(null);
   const [selectedClassId, setSelectedClassId] = useState<string | null>(null);
   const [dashboardOpenIndex, setDashboardOpenIndex] = useState<number | null>(null);
   const formId = useId();
+
+  type PendingRename =
+    | { kind: "course"; labelKey: string; oldName: string; newName: string; otherCount: number }
+    | { kind: "commitment"; oldTitle: string; newName: string; otherCount: number };
+  const [pendingRename, setPendingRename] = useState<PendingRename | null>(null);
 
   // Add-block form state
   const [newTitle, setNewTitle] = useState("Work");
@@ -133,10 +292,20 @@ export const DossierScheduleWorkspace = forwardRef(function DossierScheduleWorks
   const { calendarVisible, reportCalendarVisible, registerOpenFullscreen, openCalendar } = useCalendarState();
   const calendarRef = useRef<HTMLDivElement>(null);
   const dossierMarkerMap = useMemo(() => buildDossierMarkerMap(scheduleItems, classes), [scheduleItems, classes]);
+  const walkAdvisories = useMemo(
+    () => (transitProfile === "walking" ? computeWalkAdvisories(classes) : []),
+    [transitProfile, classes],
+  );
 
   useEffect(() => {
     registerOpenFullscreen(() => setFullscreenOpen(true));
   }, [registerOpenFullscreen]);
+
+  // Clear any stale card-selection when entering the Logistics phase.
+  // On this tab there are no ClassCards visible, so selection can only be driven by map clicks.
+  useEffect(() => {
+    if (currentPhase === "logistics") setSelectedClassId(null);
+  }, [currentPhase]);
 
   useEffect(() => {
     const el = calendarRef.current;
@@ -150,27 +319,59 @@ export const DossierScheduleWorkspace = forwardRef(function DossierScheduleWorks
   }, [reportCalendarVisible]);
 
   useEffect(() => {
-    if (!addOpen && !fullscreenOpen && !editingBlock) return;
+    if (!addOpen && !fullscreenOpen && !editingBlock && !pendingRename) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
       if (addOpen) setAddOpen(false);
       else if (editingBlock) setEditingBlock(null);
+      else if (pendingRename) setPendingRename(null);
       else setFullscreenOpen(false);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [addOpen, fullscreenOpen, editingBlock]);
+  }, [addOpen, fullscreenOpen, editingBlock, pendingRename]);
 
   const openAddModal = useCallback(() => { setBlockError(null); setAddOpen(true); }, []);
+
+  // "Just this one" for courses: apply the label override only to the single block that was edited.
+  const confirmRenameSingle = useCallback(() => {
+    if (!pendingRename || pendingRename.kind !== "course") { setPendingRename(null); return; }
+    const nextLabels = { ...courseLabels, [pendingRename.labelKey]: pendingRename.newName };
+    apply({ classes, commitments, courseLabels: nextLabels });
+    setPendingRename(null);
+  }, [pendingRename, courseLabels, apply, classes, commitments]);
+
+  // "Rename all": set the label override on every meeting entry that currently shows the old name.
+  const confirmRenameAll = useCallback(() => {
+    if (!pendingRename) return;
+    if (pendingRename.kind === "course") {
+      const nextLabels = { ...courseLabels };
+      for (const d of classes) {
+        d.meetings.forEach((_, idx) => {
+          const key = `${d.id}:${idx}`;
+          if ((courseLabels[key] ?? d.courseCode) === pendingRename.oldName) {
+            nextLabels[key] = pendingRename.newName;
+          }
+        });
+      }
+      apply({ classes, commitments, courseLabels: nextLabels });
+    } else {
+      const updated = commitments.map((c) =>
+        c.title === pendingRename.oldTitle ? { ...c, title: pendingRename.newName } : c
+      );
+      apply({ classes, commitments: updated, courseLabels });
+    }
+    setPendingRename(null);
+  }, [pendingRename, courseLabels, apply, classes, commitments]);
 
   const deleteMeeting = useCallback((block: CourseBlock) => {
     const updatedClasses = classes.map((d) => {
       if (d.id !== block.dossierId) return d;
       return { ...d, meetings: d.meetings.filter((_, idx) => idx !== block.meetingIdx) };
     });
-    apply({ classes: updatedClasses, commitments });
+    apply({ classes: updatedClasses, commitments, courseLabels });
     setEditingBlock(null);
-  }, [apply, classes, commitments]);
+  }, [apply, classes, commitments, courseLabels]);
 
   const openEditModal = useCallback((block: CourseBlock | CommitmentBlock) => {
     setEditError(null);
@@ -182,6 +383,7 @@ export const DossierScheduleWorkspace = forwardRef(function DossierScheduleWorks
       setEditEnd(minutesToTimeInput(c.endMin));
       setEditColor(c.color);
     } else {
+      setEditTitle(block.label);
       setEditDay(block.col);
       setEditStart(minutesToTimeInput(block.startMin));
       setEditEnd(minutesToTimeInput(block.endMin));
@@ -200,10 +402,24 @@ export const DossierScheduleWorkspace = forwardRef(function DossierScheduleWorks
     setEditError(null);
 
     if (editingBlock.kind === "commitment") {
-      editCommitment({ ...editingBlock.commitment, title: editTitle.trim() || "Untitled", dayCol: editDay, startMin: s, endMin: e, color: editColor });
+      const oldTitle = editingBlock.commitment.title;
+      const newTitle = editTitle.trim() || "Untitled";
+      editCommitment({ ...editingBlock.commitment, title: newTitle, dayCol: editDay, startMin: s, endMin: e, color: editColor });
+      if (newTitle !== oldTitle) {
+        const otherCount = commitments.filter(
+          (c) => c.id !== editingBlock.commitment.id && c.title === oldTitle
+        ).length;
+        if (otherCount > 0) setPendingRename({ kind: "commitment", oldTitle, newName: newTitle, otherCount });
+      }
     } else {
+      const labelKey = `${editingBlock.dossierId}:${editingBlock.meetingIdx}`;
+      const currentLabel = courseLabels[labelKey] ?? editingBlock.courseCode;
       const newDayToken = COL_TO_DAY[editDay];
-      const updatedClasses = classes.map((d) => {
+      const newLabel = editTitle.trim();
+      const labelChanged = !!newLabel && newLabel !== currentLabel;
+
+      // Build structural changes (time/day/location) only — never mutate ClassDossier.courseCode.
+      const updatedClassesStructural = classes.map((d) => {
         if (d.id !== editingBlock.dossierId) return d;
         const meetings = [...d.meetings];
         const orig = meetings[editingBlock.meetingIdx];
@@ -217,10 +433,31 @@ export const DossierScheduleWorkspace = forwardRef(function DossierScheduleWorks
         }
         return { ...d, meetings };
       });
-      apply({ classes: updatedClasses, commitments });
+
+      if (labelChanged) {
+        // Count all OTHER dossierId:meetingIdx entries whose current effective label matches.
+        const otherCount = classes.reduce((sum, d) => {
+          return sum + d.meetings.filter((_, idx) => {
+            if (d.id === editingBlock.dossierId && idx === editingBlock.meetingIdx) return false;
+            return (courseLabels[`${d.id}:${idx}`] ?? d.courseCode) === currentLabel;
+          }).length;
+        }, 0);
+
+        if (otherCount > 0) {
+          // Apply structural changes; defer label change to confirmation popup.
+          apply({ classes: updatedClassesStructural, commitments, courseLabels });
+          setPendingRename({ kind: "course", labelKey, oldName: currentLabel, newName: newLabel, otherCount });
+        } else {
+          // Only this entry has the label — apply override directly, no popup.
+          const nextLabels = { ...courseLabels, [labelKey]: newLabel };
+          apply({ classes: updatedClassesStructural, commitments, courseLabels: nextLabels });
+        }
+      } else {
+        apply({ classes: updatedClassesStructural, commitments, courseLabels });
+      }
     }
     setEditingBlock(null);
-  }, [editingBlock, editStart, editEnd, editTitle, editDay, editColor, editLocation, editCommitment, apply, classes, commitments]);
+  }, [editingBlock, editStart, editEnd, editTitle, editDay, editColor, editLocation, editCommitment, apply, classes, commitments, courseLabels]);
 
   const submitCommitment = useCallback(() => {
     const s = minutesFromTimeInput(newStart);
@@ -239,6 +476,14 @@ export const DossierScheduleWorkspace = forwardRef(function DossierScheduleWorks
     });
     setAddOpen(false);
   }, [addCommitment, newColor, newDay, newEnd, newStart, newTitle]);
+
+  // Preserves courseLabels when WeeklyCalendar drag-drop fires onApply with only classes+commitments.
+  const applyKeepingLabels = useCallback(
+    (next: { classes: ClassDossier[]; commitments: ScheduleCommitment[] }) => {
+      apply({ ...next, courseLabels });
+    },
+    [apply, courseLabels],
+  );
 
   const syncBtn = (size: "sm" | "lg") => (
     <button
@@ -282,7 +527,7 @@ export const DossierScheduleWorkspace = forwardRef(function DossierScheduleWorks
       {toolbar}
       <div className="lg:min-h-[min(520px,calc(100vh-14rem))]">
         <WeeklyCalendar
-          classes={classes} commitments={commitments} onApply={apply}
+          classes={classes} commitments={commitments} courseLabels={courseLabels} onApply={applyKeepingLabels}
           pxPerHour={px} headerActions={calHeader ?? undefined}
           hideScheduleHeading={calHeader === null} onBlockDoubleClick={openEditModal}
         />
@@ -331,6 +576,7 @@ export const DossierScheduleWorkspace = forwardRef(function DossierScheduleWorks
               onHover={() => setHoveredClassId(c.id)}
               onHoverEnd={() => setHoveredClassId(null)}
               onOpenDashboard={() => setDashboardOpenIndex(idx)}
+              onUpdate={(patch) => onUpdateDossier(c.id, patch)}
             />
           ))}
         </motion.div>
@@ -351,65 +597,330 @@ export const DossierScheduleWorkspace = forwardRef(function DossierScheduleWorks
         </div>
       </div>
 
-      {/* Desktop: high-density layout */}
-      <div className="hidden lg:block space-y-5">
-        <div className="grid grid-cols-[3fr_2fr] gap-5 items-start">
-          <DifficultyScoreHud evaluation={evaluation} />
-          <ExamsPanel classes={classes} />
-        </div>
+      {/* Desktop: 4-phase guided workspace */}
+      <div className="hidden lg:block space-y-8 workspace-grid rounded-xl p-1">
 
-        <div className="grid grid-cols-2 gap-8 items-start">
-          {/* Left: ClassCard list */}
-          <motion.div
-            className="space-y-3 pr-1"
-            initial="hidden"
-            animate="visible"
-            variants={{ visible: { transition: { staggerChildren: 0.07, delayChildren: 0.1 } } }}
-          >
-            {classes.map((c, idx) => (
-              <ClassCard
-                key={c.id} dossier={c}
-                isSelected={selectedClassId === c.id}
-                markerIndex={dossierMarkerMap.get(c.id)}
-                onSelect={() => setSelectedClassId((prev) => prev === c.id ? null : c.id)}
-                onHover={() => setHoveredClassId(c.id)}
-                onHoverEnd={() => setHoveredClassId(null)}
-                onOpenDashboard={() => setDashboardOpenIndex(idx)}
-              />
-            ))}
-          </motion.div>
-
-          {/* Right: sticky map + calendar */}
-          <div className="sticky top-4 space-y-4 overflow-y-auto hub-scroll" style={{ maxHeight: "calc(100vh - 6rem)" }}>
-            {scheduleItems.length > 0 && (
-              <motion.div
-                initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.4, delay: 0.1, ease: [0.22, 1, 0.36, 1] }}
+        {/* Phase navigation — flat tab row, no surrounding border box */}
+        <nav className="flex items-center gap-1 border-b border-white/[0.06] pb-1" aria-label="Workspace phases">
+          {PHASES.map((phase) => {
+            const Icon = phase.icon;
+            const isActive = currentPhase === phase.id;
+            return (
+              <button
+                key={phase.id}
+                type="button"
+                onClick={() => setCurrentPhase(phase.id)}
+                className={`relative flex items-center gap-2.5 rounded-lg px-4 py-2.5 text-sm transition-all duration-200 active:scale-[0.98] ${
+                  isActive
+                    ? "font-semibold text-white/90"
+                    : "font-medium text-white/40 hover:text-white/70"
+                }`}
               >
+                <Icon className={`h-4 w-4 shrink-0 ${isActive ? "text-hub-cyan" : ""}`} aria-hidden />
+                {phase.label}
+                {/* Active underline indicator */}
+                {isActive && (
+                  <motion.span
+                    layoutId="phase-underline"
+                    className="absolute inset-x-2 -bottom-1 h-px rounded-full bg-hub-cyan"
+                    transition={{ type: "spring", stiffness: 400, damping: 35 }}
+                  />
+                )}
+              </button>
+            );
+          })}
+
+          {/* Save plan — far right of phase nav */}
+          {onSave && (
+            <div className="ml-auto flex items-center gap-3 pl-4">
+              <AnimatePresence mode="wait">
+                {saveError ? (
+                  <motion.span
+                    key="save-error"
+                    initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+                    className="text-xs text-hub-danger"
+                  >
+                    {saveError}
+                  </motion.span>
+                ) : lastSavedAt ? (
+                  <motion.span
+                    key="save-ts"
+                    initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+                    className="text-xs text-white/40"
+                  >
+                    Last saved {formatSaveTime(lastSavedAt)}
+                  </motion.span>
+                ) : null}
+              </AnimatePresence>
+              <button
+                type="button"
+                onClick={() => void onSave()}
+                disabled={isSaving}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-hub-cyan/35 bg-hub-cyan/10 px-3 py-1.5 text-xs font-semibold text-hub-cyan transition hover:bg-hub-cyan/18 disabled:opacity-50"
+              >
+                {isSaving ? "Saving…" : "Save plan"}
+              </button>
+            </div>
+          )}
+        </nav>
+
+        {/* Phase 1: Overview — 60/40 hero layout */}
+        {currentPhase === "overview" && (
+          <motion.div
+            key="phase-overview"
+            initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
+            className="grid grid-cols-[3fr_2fr] gap-12 items-start"
+          >
+            <DifficultyScoreHud evaluation={evaluation} isHero />
+            <ExamsPanel classes={classes} />
+          </motion.div>
+        )}
+
+        {/* Phase 2: Dossiers — hero-sized cards */}
+        {currentPhase === "dossiers" && (
+          <motion.div
+            key="phase-dossiers"
+            initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
+          >
+            <motion.div
+              className={`grid gap-8 ${
+                classes.length <= 2 ? "grid-cols-2" :
+                classes.length === 3 ? "grid-cols-3" :
+                "grid-cols-2 xl:grid-cols-3"
+              }`}
+              initial="hidden"
+              animate="visible"
+              variants={{ visible: { transition: { staggerChildren: 0.08, delayChildren: 0.05 } } }}
+            >
+              {classes.map((c, idx) => (
+                <ClassCard
+                  key={c.id} dossier={c}
+                  isSelected={selectedClassId === c.id}
+                  markerIndex={dossierMarkerMap.get(c.id)}
+                  onSelect={() => setSelectedClassId((prev) => prev === c.id ? null : c.id)}
+                  onHover={() => setHoveredClassId(c.id)}
+                  onHoverEnd={() => setHoveredClassId(null)}
+                  onOpenDashboard={() => setDashboardOpenIndex(idx)}
+              onUpdate={(patch) => onUpdateDossier(c.id, patch)}
+                />
+              ))}
+            </motion.div>
+          </motion.div>
+        )}
+
+        {/* Phase 3: Logistics — 60/40 dual-instrument split */}
+        {currentPhase === "logistics" && (
+          <motion.div
+            key="phase-logistics"
+            initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
+            className="space-y-3"
+          >
+            {/* Walk advisories — only shown when transit profile is walking */}
+            {walkAdvisories.length > 0 && (
+              <div className="rounded-xl border border-hub-gold/20 bg-hub-gold/[0.06] px-4 py-3 space-y-1.5">
+                <p className="text-xs font-semibold text-hub-gold">Walk advisories</p>
+                {walkAdvisories.map((a) => (
+                  <p key={a.key} className="text-xs text-white/60">{a.message}</p>
+                ))}
+              </div>
+            )}
+          <div className="flex h-[85vh] overflow-hidden rounded-xl border border-white/[0.06]"
+          >
+            {/* Left pane: Map — 60% */}
+            <div className="relative flex-[3] min-w-0 overflow-hidden">
+              {scheduleItems.length > 0 ? (
                 <CampusPathMap
                   scheduleItems={scheduleItems} transitionInsights={transitionInsights}
                   highlightedDossierId={selectedClassId} dossierMarkerMap={dossierMarkerMap}
+                  mapHeight="h-[85vh]"
+                  onMarkerClick={(id) => setSelectedClassId(id)}
                 />
-              </motion.div>
-            )}
-            <div className="rounded-xl border border-white/[0.08] bg-hub-surface/90 p-3 shadow-2xl">
-              {toolbar}
-              <div ref={calendarRef} className="mt-3">
-                <WeeklyCalendar
-                  classes={classes} commitments={commitments} onApply={apply}
-                  pxPerHour={62} hideScheduleHeading={false}
-                  headerActions={calendarHeaderActions ? <>{defaultCalendarActions}{calendarHeaderActions}</> : defaultCalendarActions}
-                  onBlockDoubleClick={openEditModal}
-                  highlightedDossierId={selectedClassId}
-                />
-              </div>
-              <div className="mt-3">
-                <CommitmentsPanel commitments={commitments} onRemove={removeCommitment} />
+              ) : (
+                <div className="flex h-full items-center justify-center text-sm text-white/40">
+                  No on-campus courses to map
+                </div>
+              )}
+              <button
+                type="button"
+                onClick={() => setMapFullscreen(true)}
+                className="absolute right-4 top-4 z-10 flex items-center gap-2 rounded-md border border-white/[0.12] bg-hub-bg/80 px-3 py-1.5 text-xs font-medium text-white/70 backdrop-blur-sm transition hover:border-white/[0.2] hover:text-white/90 active:scale-[0.98]"
+              >
+                <Maximize2 className="h-3.5 w-3.5" aria-hidden />
+                Full screen
+              </button>
+            </div>
+
+            {/* Divider */}
+            <div className="w-px shrink-0 bg-white/[0.05]" />
+
+            {/* Right pane: Calendar — 40%, docked */}
+            <div
+              ref={calendarRef}
+              className="flex-[2] min-w-0 overflow-y-auto hub-scroll bg-hub-surface/95"
+            >
+              <div className="p-5">
+                <p className="mb-4 text-[10px] font-semibold uppercase tracking-widest text-white/40">
+                  Weekly schedule
+                </p>
+                {toolbar}
+                <div className="mt-4">
+                  <WeeklyCalendar
+                    classes={classes} commitments={commitments} courseLabels={courseLabels} onApply={applyKeepingLabels}
+                    pxPerHour={52} hideScheduleHeading
+                    onBlockDoubleClick={openEditModal}
+                    onBlockClick={(id) => setSelectedClassId((prev) => prev === id ? null : id)}
+
+                    highlightedDossierId={selectedClassId}
+                  />
+                </div>
+                <div className="mt-4">
+                  <CommitmentsPanel commitments={commitments} onRemove={removeCommitment} />
+                </div>
               </div>
             </div>
           </div>
-        </div>
+          </motion.div>
+        )}
+
+        {/* Phase 4: Review — Bento command center */}
+        {currentPhase === "review" && (
+          <motion.div
+            key="phase-review"
+            initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
+            className="space-y-6"
+          >
+            {/* One-time save prompt — shown on first visit to Review after a fresh upload */}
+            <AnimatePresence>
+              {showSavePrompt && (
+                <motion.div
+                  key="save-prompt"
+                  initial={{ opacity: 0, y: -8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -8 }}
+                  transition={{ duration: 0.25 }}
+                  className="flex items-start justify-between gap-4 rounded-xl border border-hub-cyan/20 bg-hub-cyan/[0.07] px-5 py-4"
+                >
+                  <div className="space-y-0.5">
+                    <p className="text-sm font-semibold text-white/90">
+                      Do you want to save this schedule?
+                    </p>
+                    <p className="text-xs text-white/50">
+                      Note: You can save your schedule at any time using the Save plan button above.
+                    </p>
+                  </div>
+                  <div className="flex shrink-0 items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => { void onSave?.(); onSavePromptDismiss?.(); }}
+                      className="rounded-lg bg-hub-cyan px-3 py-1.5 text-xs font-semibold text-hub-bg transition hover:bg-hub-cyan/85"
+                    >
+                      Save schedule
+                    </button>
+                    <button
+                      type="button"
+                      onClick={onSavePromptDismiss}
+                      className="rounded-lg px-3 py-1.5 text-xs font-medium text-white/50 transition hover:text-white/70"
+                    >
+                      Not now
+                    </button>
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+
+            <div className="grid grid-cols-3 gap-8 items-start">
+            {/* Left 2/3: HUD + Cards */}
+            <div className="col-span-2 space-y-8">
+              <DifficultyScoreHud evaluation={evaluation} />
+              <motion.div
+                className={`grid gap-6 ${classes.length <= 2 ? "grid-cols-2" : "grid-cols-2 xl:grid-cols-3"}`}
+                initial="hidden" animate="visible"
+                variants={{ visible: { transition: { staggerChildren: 0.07, delayChildren: 0.1 } } }}
+              >
+                {classes.map((c, idx) => (
+                  <ClassCard
+                    key={c.id} dossier={c}
+                    isSelected={selectedClassId === c.id}
+                    markerIndex={dossierMarkerMap.get(c.id)}
+                    onSelect={() => setSelectedClassId((prev) => prev === c.id ? null : c.id)}
+                    onHover={() => setHoveredClassId(c.id)}
+                    onHoverEnd={() => setHoveredClassId(null)}
+                    onOpenDashboard={() => setDashboardOpenIndex(idx)}
+              onUpdate={(patch) => onUpdateDossier(c.id, patch)}
+                  />
+                ))}
+              </motion.div>
+            </div>
+
+            {/* Right 1/3: Map + Calendar + Exams — sticky command panel */}
+            <div className="sticky top-4 space-y-6 overflow-y-auto hub-scroll" style={{ maxHeight: "calc(100vh - 5rem)" }}>
+              {scheduleItems.length > 0 && (
+                <motion.div
+                  initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.4, delay: 0.1, ease: [0.22, 1, 0.36, 1] }}
+                >
+                  <CampusPathMap
+                    scheduleItems={scheduleItems} transitionInsights={transitionInsights}
+                    highlightedDossierId={selectedClassId} dossierMarkerMap={dossierMarkerMap}
+                    mapHeight="h-[40vh]"
+                    onMarkerClick={(id) => setSelectedClassId(id)}
+                  />
+                </motion.div>
+              )}
+              <div ref={calendarRef} className="rounded-xl border border-white/[0.08] p-4">
+                {toolbar}
+                <div className="mt-4">
+                  <WeeklyCalendar
+                    classes={classes} commitments={commitments} courseLabels={courseLabels} onApply={applyKeepingLabels}
+                    pxPerHour={52} hideScheduleHeading={false}
+                    headerActions={calendarHeaderActions ? <>{defaultCalendarActions}{calendarHeaderActions}</> : defaultCalendarActions}
+                    onBlockDoubleClick={openEditModal}
+                    onBlockClick={(id) => setSelectedClassId((prev) => prev === id ? null : id)}
+
+                    highlightedDossierId={selectedClassId}
+                  />
+                </div>
+                <div className="mt-4">
+                  <CommitmentsPanel commitments={commitments} onRemove={removeCommitment} />
+                </div>
+              </div>
+              <ExamsPanel classes={classes} />
+            </div>
+            </div>{/* end grid grid-cols-3 */}
+          </motion.div>
+        )}
       </div>
+
+      {/* Map fullscreen overlay — Phase 3 */}
+      <AnimatePresence>
+        {mapFullscreen && (
+          <motion.div
+            key="map-fs"
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            transition={{ duration: 0.2 }}
+            className="fixed inset-0 z-[60] bg-hub-bg"
+            role="dialog" aria-modal="true" aria-label="Full screen campus map"
+          >
+            <CampusPathMap
+              scheduleItems={scheduleItems} transitionInsights={transitionInsights}
+              highlightedDossierId={selectedClassId} dossierMarkerMap={dossierMarkerMap}
+              mapHeight="h-screen"
+            />
+            <button
+              type="button"
+              onClick={() => setMapFullscreen(false)}
+              className="absolute right-5 top-5 z-[61] flex items-center gap-2 rounded-md border border-white/[0.14] bg-hub-bg/80 px-3 py-2 text-xs font-medium text-white/80 backdrop-blur-sm transition hover:border-white/[0.25] hover:text-white active:scale-[0.98]"
+            >
+              <Minimize2 className="h-3.5 w-3.5" aria-hidden />
+              Exit full screen
+            </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* Fullscreen calendar overlay */}
       <AnimatePresence>
@@ -443,7 +954,7 @@ export const DossierScheduleWorkspace = forwardRef(function DossierScheduleWorks
               {toolbar}
               <div className="min-h-0 flex-1 overflow-auto rounded-xl">
                 <WeeklyCalendar
-                  classes={classes} commitments={commitments} onApply={apply}
+                  classes={classes} commitments={commitments} courseLabels={courseLabels} onApply={applyKeepingLabels}
                   pxPerHour={96} hideScheduleHeading onBlockDoubleClick={openEditModal}
                 />
               </div>
@@ -452,9 +963,9 @@ export const DossierScheduleWorkspace = forwardRef(function DossierScheduleWorks
         )}
       </AnimatePresence>
 
-      {/* View Calendar FAB */}
+      {/* View Calendar FAB — only in overview/dossiers phases */}
       <AnimatePresence>
-        {!calendarVisible && !fullscreenOpen && (
+        {!calendarVisible && !fullscreenOpen && currentPhase !== "logistics" && currentPhase !== "review" && (
           <motion.button
             key="view-cal-fab" type="button"
             initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 12 }}
@@ -493,12 +1004,75 @@ export const DossierScheduleWorkspace = forwardRef(function DossierScheduleWorks
         }}
       />
 
+      {/* ── Rename-all confirmation ── */}
+      <AnimatePresence>
+        {pendingRename && (
+          <motion.div
+            key="rename-overlay"
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            transition={{ duration: 0.15 }}
+            className="fixed inset-0 z-[70] flex items-center justify-center bg-black/55 backdrop-blur-sm"
+            onClick={() => setPendingRename(null)}
+          >
+            <motion.div
+              initial={{ opacity: 0, scale: 0.96, y: 8 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.96 }}
+              transition={{ duration: 0.15 }}
+              className="w-full max-w-sm rounded-2xl border border-white/[0.10] bg-hub-surface-elevated p-5 shadow-2xl"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <p className="font-[family-name:var(--font-outfit)] text-sm font-semibold text-hub-text">
+                Rename other entries?
+              </p>
+              <p className="mt-2 text-xs leading-relaxed text-hub-text-muted">
+                {pendingRename.kind === "commitment" ? (
+                  <>
+                    This block was renamed from{" "}
+                    <span className="font-semibold text-hub-text">&ldquo;{pendingRename.oldTitle}&rdquo;</span>{" "}
+                    to{" "}
+                    <span className="font-semibold text-hub-text">&ldquo;{pendingRename.newName}&rdquo;</span>.{" "}
+                    <span className="font-semibold text-hub-text">{pendingRename.otherCount}</span>{" "}
+                    other block{pendingRename.otherCount === 1 ? "" : "s"} still {pendingRename.otherCount === 1 ? "has" : "have"} the old name.
+                  </>
+                ) : (
+                  <>
+                    <span className="font-semibold text-hub-text">{pendingRename.otherCount}</span>{" "}
+                    other calendar {pendingRename.otherCount === 1 ? "entry" : "entries"} will also be renamed from{" "}
+                    <span className="font-semibold text-hub-text">&ldquo;{pendingRename.oldName}&rdquo;</span>{" "}
+                    to{" "}
+                    <span className="font-semibold text-hub-text">&ldquo;{pendingRename.newName}&rdquo;</span>.
+                  </>
+                )}
+              </p>
+              <div className="mt-4 flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={pendingRename.kind === "course" ? confirmRenameSingle : () => setPendingRename(null)}
+                  className="rounded-lg px-3 py-1.5 text-xs font-medium text-white/50 transition hover:text-white/75"
+                >
+                  Just this one
+                </button>
+                <button
+                  type="button"
+                  onClick={confirmRenameAll}
+                  className="rounded-lg bg-hub-cyan px-3 py-1.5 text-xs font-semibold text-hub-bg transition hover:bg-hub-cyan/85"
+                >
+                  Rename all {pendingRename.otherCount + 1}
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* ── Course Dashboard Modal ── */}
       <DossierDashboardModal
         dossiers={classes}
         openIndex={dashboardOpenIndex}
         onClose={() => setDashboardOpenIndex(null)}
         onNavigate={setDashboardOpenIndex}
+        onUpdate={onUpdateDossier}
       />
     </>
   );

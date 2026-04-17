@@ -22,10 +22,36 @@ import type {
   VaultItem,
 } from "@/types/dossier";
 import type { DossierScheduleWorkspaceHandle } from "@/components/dashboard/DossierScheduleWorkspace";
+import { courseResearchResultToDossier } from "@/lib/mappers/courseEntryToDossier";
+import type { CourseResearchResult } from "@/lib/api/parse";
 
 const API_BASE = "http://localhost:8000";
 
-type SidebarPlan = { id: string; label: string; subtitle?: string };
+/**
+ * Ensure every ClassDossier has a non-empty `id`.
+ * Plans saved before `id` was added to the type will have `id: undefined` when
+ * deserialized from JSON. Derive it from courseCode so blockKeys are unique.
+ */
+function normalizeDossierIds(classes: ClassDossier[]): ClassDossier[] {
+  return classes.map((c, i) => {
+    if (c.id) return c;
+    const base = c.courseCode
+      ? c.courseCode.toLowerCase().replace(/\s+/g, "-")
+      : `course-${i}`;
+    return { ...c, id: base };
+  });
+}
+
+type SidebarPlan = {
+  id: string;
+  label: string;
+  subtitle?: string;
+  courseCount?: number;
+  trendLabel?: string;
+  fitnessScore?: number;
+  fitnessMax?: number;
+  updatedAt?: string;
+};
 
 type UsePlanSyncReturn = {
   authed: boolean;
@@ -38,11 +64,16 @@ type UsePlanSyncReturn = {
   viewClasses: ClassDossier[];
   viewEvaluation: ScheduleEvaluation;
   viewCommitments: ScheduleCommitment[];
+  /** True while a v2 plan is being fetched from the server. Use to show a loading state instead of stale data. */
+  isPlanLoading: boolean;
   persistCompletedSession: (payload: SavedPlanPayloadV1) => Promise<void>;
+  handleSave: (titleOverride?: string) => Promise<void>;
   handleSaveOverwrite: () => Promise<void>;
   handleSaveAsNew: () => Promise<void>;
   handleNewPlan: () => Promise<void>;
   handleDeletePlan: (id: string) => Promise<void>;
+  handleRenamePlan: (id: string, newTitle: string) => Promise<void>;
+  activePlanTitle: string;
 };
 
 type Params = {
@@ -67,12 +98,15 @@ async function fetchExpandedPlan(
     });
     if (!res.ok) return null;
     const data = await res.json() as {
-      classes: ClassDossier[];
+      classes: CourseResearchResult[];
       evaluation: ScheduleEvaluation | null;
       commitments: ScheduleCommitment[];
     };
+    // The expanded endpoint returns snake_case CourseResearchResult-shaped objects.
+    // Run them through the same mapper used by the research flow so that
+    // courseCode, courseTitle, professorName etc. are properly set on ClassDossier.
     return {
-      classes: data.classes ?? [],
+      classes: (data.classes ?? []).map(courseResearchResultToDossier),
       evaluation: data.evaluation ?? mockDossier.evaluation,
       commitments: data.commitments ?? [],
     };
@@ -101,6 +135,7 @@ export function usePlanSync({
   const [expandedClasses, setExpandedClasses] = useState<ClassDossier[] | null>(null);
   const [expandedEvaluation, setExpandedEvaluation] = useState<ScheduleEvaluation | null>(null);
   const [expandedCommitments, setExpandedCommitments] = useState<ScheduleCommitment[] | null>(null);
+  const [isPlanLoading, setIsPlanLoading] = useState(false);
 
   const activePlanIdRef = useRef(activePlanId);
   const remotePlansRef = useRef(remotePlans);
@@ -155,22 +190,34 @@ export function usePlanSync({
     void loadHubData();
   }, [loadHubData]);
 
-  // When the active plan changes and it's a v2 plan, expand it server-side
+  // Expand the active plan when it changes.
+  // IMPORTANT: remotePlans is intentionally NOT in the deps array.
+  //   - Including it would cause this effect to re-run whenever loadHubData() refreshes
+  //     the plan list (e.g. after every save), triggering a spurious loading screen and
+  //     wiping the editor state.
+  //   - We use remotePlansRef.current inside the effect so we always see the latest
+  //     plan metadata without creating a dep-cycle.
   useEffect(() => {
+    // Immediately clear stale data from the previous plan so it never bleeds through.
+    setExpandedClasses(null);
+    setExpandedEvaluation(null);
+    setExpandedCommitments(null);
+
     if (!authed || !activePlanId) {
-      setExpandedClasses(null);
-      setExpandedEvaluation(null);
-      setExpandedCommitments(null);
-      return;
-    }
-    const plan = remotePlans.find((p) => p.id === activePlanId);
-    if (!plan || (plan.payload_version ?? 1) < 2) {
-      setExpandedClasses(null);
-      setExpandedEvaluation(null);
-      setExpandedCommitments(null);
+      setIsPlanLoading(false);
       return;
     }
 
+    // Use the ref — safe because React renders and commits refs before effects fire.
+    const plan = remotePlansRef.current.find((p) => p.id === activePlanId);
+    if (!plan || (plan.payload_version ?? 1) < 2) {
+      // v1 plan or unknown — payload is already in remotePlans, no server fetch needed.
+      setIsPlanLoading(false);
+      return;
+    }
+
+    // v2 plan — must fetch full dossiers from server.
+    setIsPlanLoading(true);
     let cancelled = false;
     void (async () => {
       const supabase = createClient();
@@ -183,9 +230,11 @@ export function usePlanSync({
         setExpandedEvaluation(expanded.evaluation);
         setExpandedCommitments(expanded.commitments);
       }
+      setIsPlanLoading(false);
     })();
     return () => { cancelled = true; };
-  }, [authed, activePlanId, remotePlans]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authed, activePlanId]); // remotePlans deliberately excluded — see comment above
 
   const quarterLabel = useMemo(() => {
     if (!authed) {
@@ -210,14 +259,43 @@ export function usePlanSync({
     if (!authed) {
       return mockDossier.quarters.map((q) => ({ id: q.id, label: q.label }));
     }
-    return remotePlans.map((p) => ({
-      id: p.id,
-      label: p.title?.trim() || "Untitled plan",
-      subtitle:
-        p.quarter_label ||
-        (p.status === "draft" ? "Draft" : undefined) ||
-        undefined,
-    }));
+    return remotePlans.map((p) => {
+      let courseCount: number | undefined;
+      let trendLabel: string | undefined;
+      let fitnessScore: number | undefined;
+      let fitnessMax: number | undefined;
+      try {
+        const raw = p.payload as Record<string, unknown> | null;
+        if (raw) {
+          const ver = (raw.version as number) ?? 1;
+          if (ver === 2 && Array.isArray(raw.class_refs)) {
+            courseCount = (raw.class_refs as unknown[]).length;
+          } else if (Array.isArray(raw.classes)) {
+            courseCount = (raw.classes as unknown[]).length;
+          }
+          const ev = raw.evaluation as { fitnessScore?: number; fitnessMax?: number; trendLabel?: string } | undefined;
+          if (ev) {
+            trendLabel = ev.trendLabel;
+            fitnessScore = ev.fitnessScore;
+            fitnessMax = ev.fitnessMax;
+          }
+        }
+      } catch { /* malformed payload — skip metadata */ }
+
+      return {
+        id: p.id,
+        label: p.title?.trim() || "Untitled plan",
+        subtitle:
+          p.quarter_label ||
+          (p.status === "draft" ? "Draft" : undefined) ||
+          undefined,
+        courseCount,
+        trendLabel,
+        fitnessScore,
+        fitnessMax,
+        updatedAt: p.updated_at,
+      };
+    });
   }, [authed, remotePlans]);
 
   const sidebarVault = useMemo<VaultItem[]>(() => {
@@ -233,14 +311,19 @@ export function usePlanSync({
   }, [authed, remoteVault, activePlanId]);
 
   const { viewClasses, viewEvaluation, viewCommitments } = useMemo(() => {
+    const empty = { viewClasses: [] as ClassDossier[], viewEvaluation: evaluation, viewCommitments: [] as ScheduleCommitment[] };
+
     if (phase !== "dashboard" || !authed) {
       return { viewClasses: classes, viewEvaluation: evaluation, viewCommitments: [] as ScheduleCommitment[] };
     }
 
+    // While a plan is loading, return nothing so stale data from a previous plan never shows.
+    if (isPlanLoading) return empty;
+
     // v2 plan — use server-expanded data if available
     if (expandedClasses !== null) {
       return {
-        viewClasses: expandedClasses,
+        viewClasses: normalizeDossierIds(expandedClasses),
         viewEvaluation: expandedEvaluation ?? evaluation,
         viewCommitments: expandedCommitments ?? [],
       };
@@ -252,14 +335,14 @@ export function usePlanSync({
       const parsed = parsePlanPayload(plan.payload);
       if (parsed.classes.length > 0) {
         return {
-          viewClasses: parsed.classes,
+          viewClasses: normalizeDossierIds(parsed.classes),
           viewEvaluation: parsed.evaluation,
           viewCommitments: parsed.commitments ?? [],
         };
       }
     }
     return { viewClasses: classes, viewEvaluation: evaluation, viewCommitments: [] as ScheduleCommitment[] };
-  }, [phase, authed, activePlanId, remotePlans, classes, evaluation, expandedClasses, expandedEvaluation, expandedCommitments]);
+  }, [phase, authed, activePlanId, remotePlans, classes, evaluation, expandedClasses, expandedEvaluation, expandedCommitments, isPlanLoading]);
 
   // ---------------------------------------------------------------------------
   // Persist helpers
@@ -317,7 +400,7 @@ export function usePlanSync({
       : mockDossier.activeQuarterId;
   };
 
-  const _saveplan = useCallback(async (planId: string | null, isNew: boolean) => {
+  const _saveplan = useCallback(async (planId: string | null, isNew: boolean, titleOverride?: string) => {
     const supabase = createClient();
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return;
@@ -335,13 +418,14 @@ export function usePlanSync({
 
     const titleSuffix = new Date().toLocaleDateString(undefined, { month: "short", day: "numeric" });
     const qLabel = mockDossier.quarters.find((q) => q.id === activeQ)?.label ?? "";
+    const autoTitle = `${qLabel || "Schedule"} · ${titleSuffix}`;
 
     if (isNew || !planId) {
       const { data } = await supabase
         .from("saved_plans")
         .insert({
           user_id: user.id,
-          title: `${qLabel || "Schedule"} · ${titleSuffix}`,
+          title: titleOverride?.trim() || autoTitle,
           quarter_label: qLabel,
           status: "draft",
           payload_version: payloadVersion,
@@ -400,6 +484,15 @@ export function usePlanSync({
     }
   }, [loadHubData, onPlanCreated]);
 
+  // Decides create-vs-overwrite automatically based on whether activePlanId is
+  // a real saved plan row. No try/catch — errors propagate to the caller so it
+  // can show a user-friendly message.
+  const handleSave = useCallback(async (titleOverride?: string) => {
+    const pid = activePlanIdRef.current;
+    const isRealPlan = remotePlansRef.current.some((p) => p.id === pid);
+    await _saveplan(isRealPlan ? pid : null, !isRealPlan, titleOverride);
+  }, [_saveplan]);
+
   const handleDeletePlan = useCallback(async (id: string) => {
     if (!authedRef.current) return;
     try {
@@ -409,6 +502,17 @@ export function usePlanSync({
       if (activePlanIdRef.current === id) setActivePlanId("");
     } catch {
       /* ignore delete errors */
+    }
+  }, [loadHubData]);
+
+  const handleRenamePlan = useCallback(async (id: string, newTitle: string) => {
+    if (!authedRef.current || !newTitle.trim()) return;
+    try {
+      const supabase = createClient();
+      await supabase.from("saved_plans").update({ title: newTitle.trim() }).eq("id", id);
+      await loadHubData();
+    } catch {
+      /* ignore rename errors */
     }
   }, [loadHubData]);
 
@@ -423,10 +527,14 @@ export function usePlanSync({
     viewClasses,
     viewEvaluation,
     viewCommitments,
+    isPlanLoading,
     persistCompletedSession,
+    handleSave,
     handleSaveOverwrite,
     handleSaveAsNew,
     handleNewPlan,
     handleDeletePlan,
+    handleRenamePlan,
+    activePlanTitle: remotePlans.find((p) => p.id === activePlanId)?.title ?? "",
   };
 }
