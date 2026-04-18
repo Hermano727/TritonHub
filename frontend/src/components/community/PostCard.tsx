@@ -155,26 +155,31 @@ export function PostCard({ post }: PostCardProps) {
       className="glass-panel group relative block overflow-hidden rounded-xl border border-white/[0.08] p-5 transition-all duration-200 hover:border-hub-cyan/30 hover:bg-hub-surface-elevated/60 hover:shadow-[0_4px_24px_rgba(0,212,255,0.06)] before:absolute before:inset-y-0 before:left-0 before:w-0.5 before:bg-transparent before:transition hover:before:bg-hub-cyan"
     >
       <div className="min-w-0 flex-1">
-        {/* Tags row */}
-        <div className="mb-1.5 flex flex-wrap items-center gap-1.5">
-          {post.generalTags?.map((tag) => (
-            <span
-              key={tag}
-              className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${GENERAL_TAG_COLORS[tag] ?? "bg-white/[0.06] text-hub-text-muted"}`}
-            >
-              {tag}
-            </span>
-          ))}
-          {post.courseCode && (
+        {/* Course + professor tag */}
+        {(post.courseCode || post.professorName) && (
+          <div className="mb-1 flex flex-wrap items-center gap-1.5">
             <span className="inline-flex items-center gap-1 rounded-md bg-hub-cyan/10 px-2 py-0.5 text-xs font-medium text-hub-cyan">
-              <Tag className="h-3 w-3" />
+              <Tag className="h-3 w-3 shrink-0" />
               {post.courseCode}
+              {post.professorName && (
+                <span className="text-hub-cyan/60">: {post.professorName}</span>
+              )}
             </span>
-          )}
-          {post.professorName && (
-            <span className="text-xs text-hub-text-muted">{post.professorName}</span>
-          )}
-        </div>
+          </div>
+        )}
+        {/* General tags row */}
+        {post.generalTags && post.generalTags.length > 0 && (
+          <div className="mb-1.5 flex flex-wrap items-center gap-1.5">
+            {post.generalTags.map((tag) => (
+              <span
+                key={tag}
+                className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${GENERAL_TAG_COLORS[tag] ?? "bg-white/[0.06] text-hub-text-muted"}`}
+              >
+                {tag}
+              </span>
+            ))}
+          </div>
+        )}
 
         <h3 className="mb-1 line-clamp-1 font-semibold text-hub-text">{post.title}</h3>
         <p className="line-clamp-2 text-sm text-hub-text-secondary">{post.body}</p>

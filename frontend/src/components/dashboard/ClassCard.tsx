@@ -35,6 +35,12 @@ type ClassCardProps = {
   onUpdate?: (patch: DossierEditPatch) => void;
   /** When true, expanded view exposes inline editable fields. */
   isEditable?: boolean;
+  /** Index in the grid — used to stagger entry animation independently of parent orchestration. */
+  entryDelay?: number;
+  /** Controlled expanded state. If provided, internal state is ignored. */
+  isExpanded?: boolean;
+  /** Called when the user toggles the expand/collapse button. Required when isExpanded is provided. */
+  onToggleExpand?: () => void;
 };
 
 // ── Confidence bar color based on percentage ──────────────────────────────────
@@ -200,13 +206,12 @@ function EvidenceCard({ item }: { item: EvidenceItem }) {
 // ── Grade breakdown table ──────────────────────────────────────────────────────
 type GradeRow = { component: string; weight: string };
 
-function parseGradeBreakdown(breakdown: string): GradeRow[] {
-  return breakdown
-    .split(/[,;]/)
+function parseGradeRows(segment: string): GradeRow[] {
+  return segment
+    .split(/,/)
     .map((s) => s.trim())
     .filter(Boolean)
     .map((seg) => {
-      // Match "Homework 20%" or "20% Homework" patterns
       const pctFirst = seg.match(/^(\d+(?:\.\d+)?%)\s+(.+)$/);
       if (pctFirst) return { weight: pctFirst[1], component: pctFirst[2] };
       const pctLast = seg.match(/^(.+?)\s+(\d+(?:\.\d+)?%)$/);
@@ -215,7 +220,85 @@ function parseGradeBreakdown(breakdown: string): GradeRow[] {
     });
 }
 
+type GradingScheme = { label: string | null; rows: GradeRow[] };
+
+function rowTotal(rows: GradeRow[]): number {
+  return rows.reduce((sum, r) => {
+    const m = r.weight.match(/(\d+(?:\.\d+)?)/);
+    return sum + (m ? parseFloat(m[1]) : 0);
+  }, 0);
+}
+
+function parseGradingSchemes(breakdown: string): GradingScheme[] {
+  // Try explicit OR / pipe / slash separators first
+  for (const sep of [/ OR /i, / \| /, / \/ /]) {
+    const parts = breakdown.split(sep).map((s) => s.trim()).filter((p) => p.includes("%"));
+    if (parts.length >= 2) {
+      return parts.map((p, i) => ({
+        label: parts.length === 2 ? (i === 0 ? "Standard" : "Alternate") : `Option ${i + 1}`,
+        rows: parseGradeRows(p),
+      }));
+    }
+  }
+
+  // Semicolon separating two groups each containing a %
+  const semiParts = breakdown.split(/;\s*/).map((s) => s.trim()).filter((p) => p.includes("%"));
+  if (semiParts.length >= 2) {
+    return semiParts.map((p, i) => ({
+      label: semiParts.length === 2 ? (i === 0 ? "Standard" : "Alternate") : `Option ${i + 1}`,
+      rows: parseGradeRows(p),
+    }));
+  }
+
+  // Single comma-separated list — check if total % is way over 100 (two schemes merged)
+  const allRows = parseGradeRows(breakdown);
+  const total = rowTotal(allRows);
+  if (total > 130 && allRows.length >= 4) {
+    // Heuristic: split where cumulative % first crosses ~90 (end of scheme 1)
+    let cumsum = 0;
+    let splitIdx = allRows.length;
+    for (let i = 0; i < allRows.length; i++) {
+      const m = allRows[i].weight.match(/(\d+(?:\.\d+)?)/);
+      cumsum += m ? parseFloat(m[1]) : 0;
+      if (cumsum >= 90) { splitIdx = i + 1; break; }
+    }
+    if (splitIdx > 0 && splitIdx < allRows.length) {
+      return [
+        { label: "Standard", rows: allRows.slice(0, splitIdx) },
+        { label: "Alternate", rows: allRows.slice(splitIdx) },
+      ];
+    }
+  }
+
+  return [{ label: null, rows: allRows }];
+}
+
+function SchemeTable({ rows }: { rows: GradeRow[] }) {
+  return (
+    <table className="w-full border-collapse text-sm">
+      <thead>
+        <tr className="border-b border-white/[0.06]">
+          <th className="pb-1 text-left text-[10px] font-medium uppercase tracking-wide text-white/30">Component</th>
+          <th className="pb-1 text-right text-[10px] font-medium uppercase tracking-wide text-white/30">Weight</th>
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map((row, i) => (
+          <tr key={i} className="border-b border-white/[0.04] last:border-0">
+            <td className="py-1 pr-4 text-hub-text-secondary">{row.component}</td>
+            <td className="py-1 text-right font-[family-name:var(--font-jetbrains-mono)] text-hub-cyan tabular-nums">
+              {row.weight || "—"}
+            </td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
 function GradeBreakdownTable({ breakdown }: { breakdown: string | null | undefined }) {
+  const [schemeIdx, setSchemeIdx] = useState(0);
+
   if (!breakdown) {
     return (
       <div className="flex items-center gap-1.5 rounded-lg border border-dashed border-white/[0.06] px-3 py-2">
@@ -225,29 +308,39 @@ function GradeBreakdownTable({ breakdown }: { breakdown: string | null | undefin
     );
   }
 
-  const rows = parseGradeBreakdown(breakdown);
+  const schemes = parseGradingSchemes(breakdown);
+  const displaySchemes = schemes.slice(0, 2);
+  const hasMore = schemes.length > 2;
+  const isMulti = displaySchemes.length > 1;
+  const activeScheme = displaySchemes[Math.min(schemeIdx, displaySchemes.length - 1)];
 
   return (
     <div className="rounded-lg border border-white/[0.06] bg-hub-bg/20 px-3 py-2">
-      <p className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-white/50">Grading</p>
-      <table className="w-full border-collapse text-sm">
-        <thead>
-          <tr className="border-b border-white/[0.06]">
-            <th className="pb-1 text-left text-[10px] font-medium uppercase tracking-wide text-white/30">Component</th>
-            <th className="pb-1 text-right text-[10px] font-medium uppercase tracking-wide text-white/30">Weight</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((row, i) => (
-            <tr key={i} className="border-b border-white/[0.04] last:border-0">
-              <td className="py-1 pr-4 text-hub-text-secondary">{row.component}</td>
-              <td className="py-1 text-right font-[family-name:var(--font-jetbrains-mono)] text-hub-cyan tabular-nums">
-                {row.weight || "—"}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <p className="text-[10px] font-semibold uppercase tracking-wide text-white/50">Grading</p>
+        {isMulti && (
+          <div className="flex items-center gap-0.5 rounded-md border border-white/[0.08] bg-white/[0.04] p-0.5">
+            {displaySchemes.map((s, i) => (
+              <button
+                key={i}
+                type="button"
+                onClick={(e) => { e.stopPropagation(); setSchemeIdx(i); }}
+                className={`rounded px-2 py-0.5 text-[9px] font-semibold transition-all ${
+                  schemeIdx === i ? "bg-hub-cyan/15 text-hub-cyan" : "text-white/35 hover:text-white/60"
+                }`}
+              >
+                {s.label}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+      <SchemeTable rows={activeScheme?.rows ?? []} />
+      {hasMore && (
+        <p className="mt-2 text-[9px] text-hub-text-muted/60">
+          Additional grading options available — open Course Details to view all.
+        </p>
+      )}
     </div>
   );
 }
@@ -387,8 +480,13 @@ export function ClassCard({
   onOpenDashboard,
   onUpdate,
   isEditable = false,
+  entryDelay = 0,
+  isExpanded: isExpandedProp,
+  onToggleExpand,
 }: ClassCardProps) {
-  const [isExpanded, setIsExpanded] = useState(false);
+  const [isExpandedInternal, setIsExpandedInternal] = useState(false);
+  const isExpanded = isExpandedProp ?? isExpandedInternal;
+  const toggleExpanded = onToggleExpand ?? (() => setIsExpandedInternal((v) => !v));
 
   const rmp = dossier.logistics?.rate_my_professor;
   const sunsetSummary = getSunsetSummary(dossier.sunsetGradeDistribution);
@@ -424,11 +522,9 @@ export function ClassCard({
   return (
     <>
       <motion.article
-        layout
-        variants={reduce ? undefined : {
-          hidden: { opacity: 0, y: 10 },
-          visible: { opacity: 1, y: 0, transition: { duration: 0.32, ease: [0.22, 1, 0.36, 1] } },
-        }}
+        initial={reduce ? undefined : { opacity: 0, y: 10 }}
+        animate={reduce ? undefined : { opacity: 1, y: 0 }}
+        transition={reduce ? undefined : { duration: 0.32, ease: [0.22, 1, 0.36, 1], delay: entryDelay }}
         whileHover={reduce ? undefined : { y: -3, boxShadow: "0 8px 32px rgba(0,212,255,0.07)", transition: { duration: 0.15, ease: "easeOut" } }}
         whileTap={reduce ? undefined : { scale: 0.985, transition: { duration: 0.08 } }}
         onMouseEnter={onHover}
@@ -494,7 +590,7 @@ export function ClassCard({
                   }}
                   className="flex items-center gap-1 rounded-lg border border-hub-cyan/30 bg-hub-cyan/10 px-3 py-1.5 text-xs font-semibold text-hub-cyan transition hover:bg-hub-cyan/20 hover:border-hub-cyan/50 hover:-translate-y-[1px] active:scale-[0.98]"
                 >
-                  Course Details
+                  Full View
                   <ChevronRight className="h-3 w-3" aria-hidden />
                 </button>
               </div>
@@ -624,7 +720,7 @@ export function ClassCard({
           {/* ── Expand / collapse toggle ── */}
           <button
             type="button"
-            onClick={(e) => { e.stopPropagation(); setIsExpanded((v) => !v); }}
+            onClick={(e) => { e.stopPropagation(); toggleExpanded(); }}
             className="flex w-full items-center justify-center gap-1 rounded-md py-1 text-[10px] font-medium text-white/30 transition hover:text-white/60"
           >
             {isExpanded ? "Less" : "More details"}

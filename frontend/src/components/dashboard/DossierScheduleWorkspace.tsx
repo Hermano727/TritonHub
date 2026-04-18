@@ -281,8 +281,10 @@ export const DossierScheduleWorkspace = forwardRef(function DossierScheduleWorks
   useEffect(() => {
     setCurrentPhase("overview");
     setMainTab("dossier");
+    setExpandedCardId(null);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [planSwitchKey]);
+  const [expandedCardId, setExpandedCardId] = useState<string | null>(null);
   const [fullscreenOpen, setFullscreenOpen] = useState(false);
   const [mapFullscreen, setMapFullscreen] = useState(false);
   const [communityOverlayOpen, setCommunityOverlayOpen] = useState(false);
@@ -542,16 +544,17 @@ export const DossierScheduleWorkspace = forwardRef(function DossierScheduleWorks
     </>
   );
 
-  const toolbar = (
+  const toolbar = (fullscreen?: boolean) => (
     <ScheduleToolbar
       canUndo={canUndo} canRedo={canRedo} isDirty={isDirty}
       onUndo={undo} onRedo={redo} onReset={resetToBaseline} onAdd={openAddModal}
+      onFullscreen={fullscreen ? () => setFullscreenOpen(true) : undefined}
     />
   );
 
   const calendarNode = (px: number, calHeader: ReactNode | null) => (
     <div className="flex flex-col space-y-3">
-      {toolbar}
+      {toolbar()}
       <div className="lg:min-h-[min(520px,calc(100vh-14rem))]">
         <WeeklyCalendar
           classes={classes} commitments={commitments} courseLabels={courseLabels} onApply={applyKeepingLabels}
@@ -588,15 +591,11 @@ export const DossierScheduleWorkspace = forwardRef(function DossierScheduleWorks
         <div ref={calendarRef} className={mainTab === "dossier" ? "hidden" : ""}>
           {calendarNode(78, calendarHeaderActions ? <>{defaultCalendarActions}{calendarHeaderActions}</> : defaultCalendarActions)}
         </div>
-        <motion.div
-          className={`grid gap-4 sm:grid-cols-2 ${mainTab === "schedule" ? "hidden" : ""}`}
-          initial="hidden"
-          animate="visible"
-          variants={{ visible: { transition: { staggerChildren: 0.06, delayChildren: 0.05 } } }}
-        >
+        <div className={`grid gap-4 sm:grid-cols-2 ${mainTab === "schedule" ? "hidden" : ""}`}>
           {classes.map((c, idx) => (
             <ClassCard
-              key={c.id} dossier={c}
+              key={`${c.id}:${idx}`} dossier={c}
+              entryDelay={idx * 0.06}
               isSelected={selectedClassId === c.id}
               markerIndex={dossierMarkerMap.get(c.id)}
               onSelect={() => setSelectedClassId((prev) => prev === c.id ? null : c.id)}
@@ -604,9 +603,11 @@ export const DossierScheduleWorkspace = forwardRef(function DossierScheduleWorks
               onHoverEnd={() => setHoveredClassId(null)}
               onOpenDashboard={() => setDashboardOpenIndex(idx)}
               onUpdate={(patch) => onUpdateDossier(c.id, patch)}
+              isExpanded={expandedCardId === `mobile:${c.id}`}
+              onToggleExpand={() => setExpandedCardId((prev) => prev === `mobile:${c.id}` ? null : `mobile:${c.id}`)}
             />
           ))}
-        </motion.div>
+        </div>
         {scheduleItems.length > 0 && (
           <motion.div
             initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }}
@@ -735,29 +736,29 @@ export const DossierScheduleWorkspace = forwardRef(function DossierScheduleWorks
             initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
           >
-            <motion.div
+            <div
               className={`grid gap-8 ${
                 classes.length <= 2 ? "grid-cols-2" :
                 classes.length === 3 ? "grid-cols-3" :
                 "grid-cols-2 xl:grid-cols-3"
               }`}
-              initial="hidden"
-              animate="visible"
-              variants={{ visible: { transition: { staggerChildren: 0.08, delayChildren: 0.05 } } }}
             >
               {classes.map((c, idx) => (
                 <ClassCard
-                  key={c.id} dossier={c}
+                  key={`${c.id}:${idx}`} dossier={c}
+                  entryDelay={idx * 0.08}
                   isSelected={selectedClassId === c.id}
                   markerIndex={dossierMarkerMap.get(c.id)}
                   onSelect={() => setSelectedClassId((prev) => prev === c.id ? null : c.id)}
                   onHover={() => setHoveredClassId(c.id)}
                   onHoverEnd={() => setHoveredClassId(null)}
                   onOpenDashboard={() => setDashboardOpenIndex(idx)}
-              onUpdate={(patch) => onUpdateDossier(c.id, patch)}
+                  onUpdate={(patch) => onUpdateDossier(c.id, patch)}
+                  isExpanded={expandedCardId === `dossiers:${c.id}`}
+                  onToggleExpand={() => setExpandedCardId((prev) => prev === `dossiers:${c.id}` ? null : `dossiers:${c.id}`)}
                 />
               ))}
-            </motion.div>
+            </div>
           </motion.div>
         )}
 
@@ -816,7 +817,7 @@ export const DossierScheduleWorkspace = forwardRef(function DossierScheduleWorks
                 <p className="mb-4 text-[10px] font-semibold uppercase tracking-widest text-white/40">
                   Weekly schedule
                 </p>
-                {toolbar}
+                {toolbar(true)}
                 <div className="mt-4">
                   <WeeklyCalendar
                     classes={classes} commitments={commitments} courseLabels={courseLabels} onApply={applyKeepingLabels}
@@ -891,24 +892,23 @@ export const DossierScheduleWorkspace = forwardRef(function DossierScheduleWorks
                 onGoToCourses={() => setCurrentPhase("dossiers")}
                 onOpenCalendar={openCalendar}
               />
-              <motion.div
-                className={`grid gap-6 ${classes.length <= 2 ? "grid-cols-2" : "grid-cols-2 xl:grid-cols-3"}`}
-                initial="hidden" animate="visible"
-                variants={{ visible: { transition: { staggerChildren: 0.07, delayChildren: 0.1 } } }}
-              >
+              <div className={`grid gap-6 ${classes.length <= 2 ? "grid-cols-2" : "grid-cols-2 xl:grid-cols-3"}`}>
                 {classes.map((c, idx) => (
                   <ClassCard
-                    key={c.id} dossier={c}
+                    key={`${c.id}:${idx}`} dossier={c}
+                    entryDelay={idx * 0.07}
                     isSelected={selectedClassId === c.id}
                     markerIndex={dossierMarkerMap.get(c.id)}
                     onSelect={() => setSelectedClassId((prev) => prev === c.id ? null : c.id)}
                     onHover={() => setHoveredClassId(c.id)}
                     onHoverEnd={() => setHoveredClassId(null)}
                     onOpenDashboard={() => setDashboardOpenIndex(idx)}
-              onUpdate={(patch) => onUpdateDossier(c.id, patch)}
+                    onUpdate={(patch) => onUpdateDossier(c.id, patch)}
+                    isExpanded={expandedCardId === `review:${c.id}`}
+                    onToggleExpand={() => setExpandedCardId((prev) => prev === `review:${c.id}` ? null : `review:${c.id}`)}
                   />
                 ))}
-              </motion.div>
+              </div>
             </div>
 
             {/* Right 1/3: Map + Calendar + Exams — sticky command panel */}
@@ -927,7 +927,7 @@ export const DossierScheduleWorkspace = forwardRef(function DossierScheduleWorks
                 </motion.div>
               )}
               <div ref={calendarRef} className="rounded-xl border border-white/[0.08] p-4">
-                {toolbar}
+                {toolbar()}
                 <div className="mt-4">
                   <WeeklyCalendar
                     classes={classes} commitments={commitments} courseLabels={courseLabels} onApply={applyKeepingLabels}
@@ -1006,7 +1006,7 @@ export const DossierScheduleWorkspace = forwardRef(function DossierScheduleWorks
                   </button>
                 </div>
               </div>
-              {toolbar}
+              {toolbar()}
               <div className="min-h-0 flex-1 overflow-auto rounded-xl">
                 <WeeklyCalendar
                   classes={classes} commitments={commitments} courseLabels={courseLabels} onApply={applyKeepingLabels}

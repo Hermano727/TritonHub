@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "framer-motion";
 import { AlertCircle, ChevronRight, Trash2 } from "lucide-react";
-import { RightSidebar } from "@/components/layout/RightSidebar";
+import { LeftSidebar } from "@/components/layout/LeftSidebar";
 import { IngestionHub } from "@/components/ingestion/IngestionHub";
 import { ProcessingModal } from "@/components/modals/ProcessingModal";
 import { ScheduleBriefingModal } from "@/components/modals/ScheduleBriefingModal";
@@ -400,6 +400,9 @@ export function CommandCenter() {
               categories: fitResult.categories ?? undefined,
               alerts: fitResult.alerts,
               recommendation: fitResult.recommendation,
+              studyHoursMin: fitResult.study_hours_min,
+              studyHoursMax: fitResult.study_hours_max,
+              userInputFeedback: fitResult.user_input_feedback ?? undefined,
             };
           }
         } catch (err) {
@@ -531,7 +534,7 @@ export function CommandCenter() {
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="flex min-h-0 flex-1">
-        <RightSidebar
+        <LeftSidebar
           planSectionTitle={authed ? "Saved plans" : "My Quarters"}
           plans={sidebarPlans}
           activePlanId={activePlanId}

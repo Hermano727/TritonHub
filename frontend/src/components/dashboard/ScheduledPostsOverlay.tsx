@@ -320,57 +320,61 @@ function OverlayPostCard({
           }}
         />
 
-        {/* Content — clicking anywhere here expands */}
-        <button
-          type="button"
-          onClick={onToggle}
-          className="min-w-0 flex-1 text-left"
-        >
-          {/* Tags */}
-          <div className="mb-1.5 flex flex-wrap items-center gap-1.5">
-            {post.generalTags?.map((tag) => (
-              <span
-                key={tag}
-                className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${GENERAL_TAG_COLORS[tag] ?? "bg-white/[0.06] text-hub-text-muted"}`}
-              >
-                {tag}
-              </span>
-            ))}
-            {post.courseCode && (
+        {/* Content column */}
+        <div className="min-w-0 flex-1">
+          {/* Top row: course:prof (left) + general tags + chevron (right) */}
+          <div className="mb-1.5 flex items-center gap-1.5">
+            {(post.courseCode || post.professorName) && (
               <span className="inline-flex items-center gap-1 rounded-md bg-hub-cyan/10 px-2 py-0.5 text-xs font-medium text-hub-cyan">
-                <Tag className="h-3 w-3" />
+                <Tag className="h-3 w-3 shrink-0" />
                 {post.courseCode}
+                {post.professorName && (
+                  <span className="text-hub-cyan/60">: {post.professorName}</span>
+                )}
               </span>
             )}
-          </div>
-
-          <h3 className="mb-1 font-semibold leading-snug text-white/90">{post.title}</h3>
-
-          {/* Meta */}
-          <div className="flex flex-wrap items-center gap-2 text-[11px] text-white/40">
-            <div className="flex h-5 w-5 items-center justify-center rounded-full bg-hub-cyan/15 text-[9px] font-bold text-hub-cyan">
-              {getInitials(post.isAnonymous ? "Anon" : post.authorDisplayName)}
+            <div className="ml-auto flex items-center gap-1.5">
+              {post.generalTags?.map((tag) => (
+                <span
+                  key={tag}
+                  className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${GENERAL_TAG_COLORS[tag] ?? "bg-white/[0.06] text-hub-text-muted"}`}
+                >
+                  {tag}
+                </span>
+              ))}
+              <motion.button
+                type="button"
+                onClick={onToggle}
+                animate={{ rotate: isExpanded ? 180 : 0 }}
+                transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
+                className="shrink-0 text-white/30 transition hover:text-white/60 active:scale-90"
+              >
+                <ChevronDown className="h-4 w-4" />
+              </motion.button>
             </div>
-            <span>{post.isAnonymous ? "Anonymous" : post.authorDisplayName}</span>
-            <span>·</span>
-            <span>{timeAgo(post.createdAt)}</span>
-            <span className="ml-auto flex items-center gap-1">
-              <MessageSquare className="h-3 w-3" />
-              {detail ? detail.replies.length : post.replyCount}
-            </span>
           </div>
-        </button>
 
-        {/* Expand chevron */}
-        <motion.button
-          type="button"
-          onClick={onToggle}
-          animate={{ rotate: isExpanded ? 180 : 0 }}
-          transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
-          className="mt-1 shrink-0 text-white/30 transition hover:text-white/60 active:scale-90"
-        >
-          <ChevronDown className="h-4 w-4" />
-        </motion.button>
+          {/* Title + meta — clicking expands */}
+          <button
+            type="button"
+            onClick={onToggle}
+            className="w-full text-left"
+          >
+            <h3 className="mb-1 font-semibold leading-snug text-white/90">{post.title}</h3>
+            <div className="flex flex-wrap items-center gap-2 text-[11px] text-white/40">
+              <div className="flex h-5 w-5 items-center justify-center rounded-full bg-hub-cyan/15 text-[9px] font-bold text-hub-cyan">
+                {getInitials(post.isAnonymous ? "Anon" : post.authorDisplayName)}
+              </div>
+              <span>{post.isAnonymous ? "Anonymous" : post.authorDisplayName}</span>
+              <span>·</span>
+              <span>{timeAgo(post.createdAt)}</span>
+              <span className="ml-auto flex items-center gap-1">
+                <MessageSquare className="h-3 w-3" />
+                {detail ? detail.replies.length : post.replyCount}
+              </span>
+            </div>
+          </button>
+        </div>
       </div>
 
       {/* ── Expanded body ── */}
@@ -446,6 +450,8 @@ export function ScheduledPostsOverlay({ classes, onClose }: Props) {
   const [detailCache, setDetailCache] = useState<Record<string, PostDetail>>({});
   const [loadingDetail, setLoadingDetail] = useState(false);
   const panelRef = useRef<HTMLDivElement>(null);
+  const detailCacheRef = useRef(detailCache);
+  detailCacheRef.current = detailCache;
 
   const courseCodes = useMemo(
     () => [...new Set(classes.map((c) => c.courseCode).filter(Boolean))] as string[],
@@ -474,6 +480,18 @@ export function ScheduledPostsOverlay({ classes, onClose }: Props) {
   }, [courseCodes]);
 
   useEffect(() => { void fetchPosts(); }, [fetchPosts]);
+
+  // Pre-fetch details for the first few posts so replies are ready instantly
+  useEffect(() => {
+    if (posts.length === 0) return;
+    for (const post of posts.slice(0, 4)) {
+      if (!detailCacheRef.current[post.id]) {
+        getPost(post.id)
+          .then((detail) => setDetailCache((prev) => ({ ...prev, [post.id]: detail })))
+          .catch(() => {});
+      }
+    }
+  }, [posts]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };

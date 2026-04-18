@@ -81,13 +81,22 @@ export interface BatchResearchResponse {
   fit_evaluation?: FitAnalysisResult | null;
 }
 
+export interface UserInputFeedback {
+  academic_alignment: string[];
+  practical_risks: string[];
+}
+
 export interface FitAnalysisResult {
   fitness_score: number;
   fitness_max: number;
   trend_label: string;
+  study_hours_min?: number;
+  study_hours_max?: number;
   categories?: FitnessCategory[];
   alerts: Array<{ id: string; severity: "critical" | "warning" | "info"; title: string; detail: string }>;
-  recommendation: string;
+  /** New API returns string[]; old saved plans may have a legacy string. */
+  recommendation: string[] | string;
+  user_input_feedback?: UserInputFeedback | string[] | null;
 }
 
 export async function analyzeFit(

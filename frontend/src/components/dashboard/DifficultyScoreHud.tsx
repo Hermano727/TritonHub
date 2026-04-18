@@ -5,6 +5,7 @@ import { motion, useReducedMotion } from "framer-motion";
 import {
   AlertCircle,
   AlertTriangle,
+  BookOpen,
   CalendarDays,
   CheckCircle2,
   Info,
@@ -17,7 +18,7 @@ import {
   RadarChart,
   ResponsiveContainer,
 } from "recharts";
-import type { ScheduleEvaluation } from "@/types/dossier";
+import type { ScheduleEvaluation, UserInputFeedback } from "@/types/dossier";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -25,9 +26,9 @@ import type { ScheduleEvaluation } from "@/types/dossier";
 
 function scoreColor(score: number, max: number): string {
   const pct = score / max;
-  if (pct <= 0.4) return "#5eead4"; // hub-success
-  if (pct <= 0.65) return "#e3b12f"; // hub-gold
-  return "#f05a5a"; // hub-danger
+  if (pct <= 0.4) return "#5eead4";
+  if (pct <= 0.65) return "#e3b12f";
+  return "#f05a5a";
 }
 
 function trendBadgeClass(score: number, max: number): string {
@@ -35,13 +36,6 @@ function trendBadgeClass(score: number, max: number): string {
   if (pct <= 0.4) return "border-emerald-400/25 bg-emerald-400/10 text-emerald-300";
   if (pct <= 0.65) return "border-amber-400/25 bg-amber-400/10 text-amber-300";
   return "border-red-400/25 bg-red-400/10 text-red-300";
-}
-
-/** Rough percentile: score/max → "harder than X% of UCSD schedules" */
-function toPercentile(score: number, max: number): number {
-  const t = score / max;
-  // Slightly concave so mid-scores feel meaningful
-  return Math.round(Math.min(99, Math.max(1, t * t * 40 + t * 58 + 1)));
 }
 
 function useCountUp(target: number, duration = 900) {
@@ -64,7 +58,7 @@ function useCountUp(target: number, duration = 900) {
 }
 
 // ---------------------------------------------------------------------------
-// Advisor note bullet parsing & entity highlighting
+// Bullet helpers
 // ---------------------------------------------------------------------------
 
 const COURSE_CODE_RE = /\b([A-Z]{2,6}\s*\d{2,3}[A-Z]?)\b/g;
@@ -93,35 +87,45 @@ function HighlightedText({ text }: { text: string }) {
   );
 }
 
-type BulletSeverity = "danger" | "warning" | "ok";
-
-function detectSeverity(text: string): BulletSeverity {
-  const lower = text.toLowerCase();
-  if (
-    /\b(no podcast|hard|heavy|mandatory|critical|overload|exam conflict|no drops|high workload)\b/.test(lower)
-  ) return "danger";
-  if (
-    /\b(moderate|consider|recommend|attendance|limited|may|potential|watch|note)\b/.test(lower)
-  ) return "warning";
-  return "ok";
-}
-
-const SEVERITY_ICON: Record<BulletSeverity, React.ReactNode> = {
-  danger: <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[#f05a5a]" />,
-  warning: <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[#e3b12f]" />,
-  ok: <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[#5eead4]" />,
-};
-
-function splitBullets(text: string): string[] {
-  return text
+/** Normalize string | string[] → string[] for both old and new API formats. */
+function toBullets(value: string[] | string | undefined): string[] {
+  if (!value) return [];
+  if (Array.isArray(value)) return value.filter((s) => s.trim().length > 0);
+  return value
     .split(/\.\s+/)
     .map((s) => s.trim().replace(/\.$/, ""))
     .filter((s) => s.length > 8);
 }
 
+/** Normalize the userInputFeedback field — handles new structured and legacy flat formats. */
+function toUserInputFeedback(
+  value: UserInputFeedback | string[] | string | undefined,
+): UserInputFeedback | null {
+  if (!value) return null;
+  if (typeof value === "object" && !Array.isArray(value)) return value as UserInputFeedback;
+  // Legacy flat list → dump everything into practical_risks
+  return { academic_alignment: [], practical_risks: toBullets(value as string[] | string) };
+}
+
+type BulletSeverity = "danger" | "warning" | "ok";
+
+function detectSeverity(text: string): BulletSeverity {
+  const lower = text.toLowerCase();
+  if (/\b(no podcast|hard|heavy|mandatory|critical|overload|exam conflict|no drops|high workload)\b/.test(lower))
+    return "danger";
+  if (/\b(moderate|consider|recommend|attendance|limited|may|potential|watch|note)\b/.test(lower))
+    return "warning";
+  return "ok";
+}
+
+const RISK_ICON: Record<BulletSeverity, React.ReactNode> = {
+  danger: <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[#f05a5a]" />,
+  warning: <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[#e3b12f]" />,
+  ok: <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[#5eead4]" />,
+};
 
 // ---------------------------------------------------------------------------
-// Tooltip (overflow-safe — rendered above the card via z-50)
+// Tooltip
 // ---------------------------------------------------------------------------
 
 function HudInfoTooltip({ text }: { text: string }) {
@@ -155,14 +159,14 @@ function HudInfoTooltip({ text }: { text: string }) {
 
 type RadarDatum = { subject: string; value: number; fullMark: number };
 
-function ScoreRadar({ data, color, height = 260 }: { data: RadarDatum[]; color: string; height?: number }) {
+function ScoreRadar({ data, color, height = 299 }: { data: RadarDatum[]; color: string; height?: number }) {
   return (
     <ResponsiveContainer width="100%" height={height}>
-      <RadarChart cx="50%" cy="50%" outerRadius="85%" data={data}>
+      <RadarChart cx="50%" cy="50%" outerRadius="88%" data={data}>
         <PolarGrid stroke="rgba(255,255,255,0.07)" />
         <PolarAngleAxis
           dataKey="subject"
-          tick={{ fill: "rgba(255,255,255,0.45)", fontSize: 11, fontWeight: 700 }}
+          tick={{ fill: "rgba(255,255,255,0.5)", fontSize: 11, fontWeight: 700 }}
         />
         <Radar
           name="Score"
@@ -193,9 +197,9 @@ export function DifficultyScoreHud({ evaluation, isHero = false, onGoToCourses, 
   const reduce = useReducedMotion();
   const displayScore = useCountUp(evaluation.fitnessScore);
   const color = scoreColor(evaluation.fitnessScore, evaluation.fitnessMax);
-  const percentile = toPercentile(evaluation.fitnessScore, evaluation.fitnessMax);
   const cats = evaluation.categories ?? [];
-  const bullets = evaluation.recommendation ? splitBullets(evaluation.recommendation) : [];
+  const bullets = toBullets(evaluation.recommendation);
+  const goalFeedback = toUserInputFeedback(evaluation.userInputFeedback);
 
   const radarData: RadarDatum[] = cats.map((c) => ({
     subject: c.label,
@@ -214,22 +218,28 @@ export function DifficultyScoreHud({ evaluation, isHero = false, onGoToCourses, 
     { icon: <CalendarDays className="h-3.5 w-3.5" />, label: "Calendar", onClick: onOpenCalendar },
   ];
 
+  const hasStudyLoad = (evaluation.studyHoursMin ?? 0) > 0 && (evaluation.studyHoursMax ?? 0) > 0;
+
   return (
     <section
-      className="w-full rounded-2xl border border-white/[0.10] shadow-2xl"
+      className="w-full rounded-2xl border border-white/[0.13] shadow-2xl"
       style={{
-        background: "rgba(17, 34, 64, 0.55)",
-        backdropFilter: "blur(16px)",
-        WebkitBackdropFilter: "blur(16px)",
+        background: "rgba(17, 34, 64, 0.92)",
+        backdropFilter: "blur(20px)",
+        WebkitBackdropFilter: "blur(20px)",
+        boxShadow: "0 0 0 1px rgba(255,255,255,0.05) inset, 0 8px 32px rgba(0,0,0,0.4)",
       }}
     >
       {/* ── Header ─────────────────────────────────────────────────────────── */}
-      <div className="flex items-center justify-between border-b border-white/[0.07] px-5 py-3.5">
+      <div className="flex items-center justify-between border-b border-white/[0.07] px-6 py-4">
         <div className="flex items-center gap-2.5">
-          <h2 className="font-[family-name:var(--font-outfit)] text-[11px] font-bold uppercase tracking-[0.18em] text-white/50">
+          <h2
+            className="font-[family-name:var(--font-outfit)] font-bold text-white/90"
+            style={{ fontSize: "26px", letterSpacing: "-0.02em" }}
+          >
             Quarter Dossier
           </h2>
-          <HudInfoTooltip text="Graded based on difficulty of classes, schedule timing, and workload" />
+          <HudInfoTooltip text="Graded on class difficulty, schedule timing, and total workload" />
         </div>
         <div className="flex items-center gap-3">
           <span className="font-[family-name:var(--font-jetbrains-mono)] text-[10px] text-white/30">
@@ -246,7 +256,7 @@ export function DifficultyScoreHud({ evaluation, isHero = false, onGoToCourses, 
       {/* ── Primary score + radar ───────────────────────────────────────────── */}
       <div className={`flex items-center gap-0 ${isHero ? "flex-row" : "flex-col sm:flex-row"}`}>
         {/* Score block */}
-        <div className={`flex shrink-0 flex-col ${isHero ? "w-60 px-8 py-8" : "w-full px-6 py-6 sm:w-52 sm:px-6 sm:py-6"}`}>
+        <div className={`flex shrink-0 flex-col ${isHero ? "w-64 px-8 py-8" : "w-full px-6 py-6 sm:w-56 sm:px-6 sm:py-6"}`}>
           <span className="mb-1 text-[10px] font-semibold uppercase tracking-widest text-white/35">
             Difficulty Score
           </span>
@@ -266,19 +276,25 @@ export function DifficultyScoreHud({ evaluation, isHero = false, onGoToCourses, 
             </span>
           </div>
 
-          {/* Percentile sub-header */}
-          <motion.p
-            className="mt-2 text-[11px] leading-snug text-white/50"
+          {/* Study load stat (replaces percentile) */}
+          <motion.div
+            className="mt-2.5 flex items-center gap-1.5"
             initial={reduce ? false : { opacity: 0, y: 4 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.35 }}
           >
-            Harder than{" "}
-            <span className="font-semibold" style={{ color }}>
-              {percentile}%
-            </span>{" "}
-            of UCSD schedules
-          </motion.p>
+            <BookOpen className="h-3 w-3 text-white/30" />
+            <span className="text-[11px] text-white/50">
+              Est. study load:{" "}
+              {hasStudyLoad ? (
+                <span className="font-semibold text-white/70">
+                  {evaluation.studyHoursMin}–{evaluation.studyHoursMax} hrs/wk
+                </span>
+              ) : (
+                <span className="text-white/30">—</span>
+              )}
+            </span>
+          </motion.div>
 
           {/* Thin score bar */}
           <div className="mt-4 h-[3px] w-full overflow-hidden rounded-full bg-white/[0.07]">
@@ -298,10 +314,9 @@ export function DifficultyScoreHud({ evaluation, isHero = false, onGoToCourses, 
         {/* Radar chart */}
         {radarData.length > 0 ? (
           <div className={`flex flex-1 items-center justify-center ${isHero ? "px-8 py-8" : "px-4 py-4"}`}>
-            <ScoreRadar data={radarData} color={color} height={isHero ? 340 : 260} />
+            <ScoreRadar data={radarData} color={color} height={isHero ? 391 : 299} />
           </div>
         ) : (
-          // Fallback category sparklines when no radar data
           <div className={`flex flex-1 flex-col justify-center ${isHero ? "gap-5 px-8 py-8" : "gap-3.5 px-5 py-5"}`}>
             {cats.map((cat, i) => (
               <div key={cat.label} className="flex items-center gap-3">
@@ -329,7 +344,7 @@ export function DifficultyScoreHud({ evaluation, isHero = false, onGoToCourses, 
 
       {/* ── Alerts ─────────────────────────────────────────────────────────── */}
       {evaluation.alerts.length > 0 && (
-        <div className="flex flex-wrap gap-2 border-t border-white/[0.06] px-5 py-3">
+        <div className="flex flex-wrap gap-2 border-t border-white/[0.06] px-6 py-3">
           {evaluation.alerts.map((a) => (
             <span
               key={a.id}
@@ -355,30 +370,78 @@ export function DifficultyScoreHud({ evaluation, isHero = false, onGoToCourses, 
         </div>
       )}
 
-      {/* ── Advisor notes ──────────────────────────────────────────────────── */}
+      {/* ── Advisor notes — plain bullets ──────────────────────────────────── */}
       {bullets.length > 0 && (
-        <div className="border-t border-white/[0.06] px-5 py-4">
-          <p className="mb-3 text-[10px] font-bold uppercase tracking-[0.15em] text-white/35">
+        <div className="border-t border-white/[0.06] px-6 py-4">
+          <p className="mb-3 text-[10px] font-bold uppercase tracking-[0.15em] text-white/30">
             Advisor Notes
           </p>
-          <ul className="space-y-2.5">
-            {bullets.map((b, i) => {
-              const sev = detectSeverity(b);
-              return (
-                <li key={i} className="flex items-start gap-2.5">
-                  {SEVERITY_ICON[sev]}
-                  <span className="text-[12.5px] leading-[1.6] text-white/70">
-                    <HighlightedText text={`${b}.`} />
-                  </span>
-                </li>
-              );
-            })}
+          <ul className="space-y-2">
+            {bullets.map((b, i) => (
+              <li key={i} className="flex items-start gap-2.5">
+                <span className="mt-[7px] h-1 w-1 shrink-0 rounded-full bg-white/25" />
+                <span className="text-[15px] leading-[1.6] text-white/60">
+                  <HighlightedText text={b} />
+                </span>
+              </li>
+            ))}
           </ul>
         </div>
       )}
 
+      {/* ── Your goals vs. this schedule — two-column ──────────────────────── */}
+      {goalFeedback && (goalFeedback.academic_alignment.length > 0 || goalFeedback.practical_risks.length > 0) && (
+        <div className="border-t border-hub-cyan/[0.12] bg-hub-cyan/[0.025] px-6 py-5">
+          <p className="mb-4 text-[10px] font-bold uppercase tracking-[0.15em] text-hub-cyan/50">
+            Your Goals vs. This Schedule
+          </p>
+          <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
+            {/* Left: Academic Alignment */}
+            {goalFeedback.academic_alignment.length > 0 && (
+              <div>
+                <p className="mb-2.5 text-[10px] font-semibold uppercase tracking-[0.1em] text-white/30">
+                  Academic Alignment
+                </p>
+                <ul className="space-y-2.5">
+                  {goalFeedback.academic_alignment.map((b, i) => (
+                    <li key={i} className="flex items-start gap-2.5">
+                      <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[#5eead4]" />
+                      <span className="text-[15px] leading-[1.6] text-white/70">
+                        <HighlightedText text={b} />
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            {/* Right: Practical Risks */}
+            {goalFeedback.practical_risks.length > 0 && (
+              <div>
+                <p className="mb-2.5 text-[10px] font-semibold uppercase tracking-[0.1em] text-white/30">
+                  Practical Risks
+                </p>
+                <ul className="space-y-2.5">
+                  {goalFeedback.practical_risks.map((b, i) => {
+                    const sev = detectSeverity(b);
+                    return (
+                      <li key={i} className="flex items-start gap-2.5">
+                        {RISK_ICON[sev]}
+                        <span className="text-[15px] leading-[1.6] text-white/70">
+                          <HighlightedText text={b} />
+                        </span>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* ── Quick actions ──────────────────────────────────────────────────── */}
-      <div className="flex flex-wrap gap-2 border-t border-white/[0.06] px-5 py-3">
+      <div className="flex flex-wrap gap-2 border-t border-white/[0.06] px-6 py-3">
         {quickActions.map((a) => (
           <button
             key={a.label}

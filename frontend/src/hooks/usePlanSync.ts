@@ -418,6 +418,7 @@ export function usePlanSync({
         supabase.from("vault_items").select("*").order("updated_at", { ascending: false }),
       ]);
       setAuthed(true);
+      // RLS already excludes other users' rows; filter here is just a safety net.
       setRemotePlans((plansRes.data as SavedPlanRow[] | null) ?? []);
       setRemoteVault((vaultRes.data as VaultItemRow[] | null) ?? []);
       if (inserted?.id) setActivePlanId(inserted.id as string);
@@ -553,16 +554,20 @@ export function usePlanSync({
 
   const handleDeletePlan = useCallback(async (id: string) => {
     if (!authedRef.current) return;
+    // Optimistically remove from UI immediately.
+    setRemotePlans((prev) => prev.filter((p) => p.id !== id));
+    const wasActive = activePlanIdRef.current === id;
+    if (wasActive) setActivePlanId("");
     try {
       const supabase = createClient();
-      // Soft-delete: mark as deleted instead of hard-removing the row from the DB.
-      await supabase.from("saved_plans").update({ is_deleted: true }).eq("id", id);
-      const wasActive = activePlanIdRef.current === id;
-      if (wasActive) setActivePlanId("");
-      await loadHubData();
+      const { error } = await supabase.from("saved_plans").delete().eq("id", id);
+      if (error) throw error;
       if (wasActive) onActivePlanDeletedRef.current?.();
+      // Re-sync in background to confirm server state — don't await so UI stays snappy.
+      void loadHubData();
     } catch {
-      /* ignore delete errors */
+      // Revert optimistic removal on error.
+      await loadHubData();
     }
   }, [loadHubData]);
 

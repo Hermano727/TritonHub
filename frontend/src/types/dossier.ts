@@ -2,7 +2,7 @@ export type UiPhase = "idle" | "processing" | "dashboard";
 
 export type TransitProfile = "walking" | "biking" | "spin" | "car";
 export type PriorityType = "career" | "research" | "interest" | "grad_school";
-export type SkillFocus = "project" | "theoretical" | "mixed";
+export type SkillFocus = "project" | "theoretical" | "career" | "mixed";
 
 export type ScheduleBriefing = {
   scheduleTitle: string;
@@ -153,13 +153,24 @@ export interface FitnessCategory {
   detail: string;
 }
 
+export interface UserInputFeedback {
+  academic_alignment: string[];
+  practical_risks: string[];
+}
+
 export interface ScheduleEvaluation {
   fitnessScore: number;
   fitnessMax: number;
   trendLabel: string;
   categories?: FitnessCategory[];
   alerts: ScheduleAlert[];
-  recommendation?: string;
+  /** New API returns string[]; old saved plans may have a legacy string. */
+  recommendation?: string[] | string;
+  /** Estimated weekly study hours (outside class). */
+  studyHoursMin?: number;
+  studyHoursMax?: number;
+  /** Gemini's structured response to student's stated goals vs. courses. Only present when briefing was provided. */
+  userInputFeedback?: UserInputFeedback | string[] | string;
 }
 
 export interface ScheduleItem {
