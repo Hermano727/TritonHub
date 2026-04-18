@@ -1,19 +1,25 @@
 "use client";
 
+import { useRef, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import {
   Anchor,
+  Camera,
   ClipboardList,
   FileText,
   FolderArchive,
   GraduationCap,
   MessageSquare,
+  Plus,
   Sparkles,
 } from "lucide-react";
 import { SignOutButton } from "@/components/auth/SignOutButton";
-import { initialsFromName } from "@/lib/hub/initials";
 import { vaultKindLabel } from "@/lib/hub/vault-map";
+import { uploadFile } from "@/lib/storage";
+import { createClient } from "@/lib/supabase/client";
+import { VaultUploadModal } from "./VaultUploadModal";
 import type { VaultItem } from "@/types/dossier";
 import type { PostSummary } from "@/types/community";
 
@@ -44,10 +50,12 @@ const fadeUp = {
 };
 
 type ProfileHubProps = {
+  userId: string;
   displayName: string;
   email: string;
   college: string | null;
   expectedGrad: string | null;
+  avatarUrl: string | null;
   plans: ProfilePlan[];
   quarters: ProfileQuarter[];
   vaultItems: VaultItem[];
@@ -55,15 +63,23 @@ type ProfileHubProps = {
 };
 
 export function ProfileHub({
+  userId,
   displayName,
   email,
   college,
   expectedGrad,
+  avatarUrl,
   plans,
   quarters,
   vaultItems,
   userPosts = [],
 }: ProfileHubProps) {
+  const router = useRouter();
+  const avatarInputRef = useRef<HTMLInputElement>(null);
+  const [localAvatarUrl, setLocalAvatarUrl] = useState<string | null>(avatarUrl);
+  const [avatarUploading, setAvatarUploading] = useState(false);
+  const [vaultModalOpen, setVaultModalOpen] = useState(false);
+
   const initials =
     displayName
       .split(/\s+/)
@@ -71,6 +87,31 @@ export function ProfileHub({
       .slice(0, 2)
       .map((w) => w[0]?.toUpperCase() ?? "")
       .join("") || "?";
+
+  async function handleAvatarChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setAvatarUploading(true);
+    try {
+      const ext = file.name.split(".").pop() ?? "jpg";
+      const path = `${userId}/avatar/profile.${ext}`;
+      const storagePath = await uploadFile(path, file, {
+        maxBytes: 5 * 1_000_000,
+        accept: ["image"],
+      });
+      const supabase = createClient();
+      await supabase.from("profiles").update({ avatar_url: storagePath }).eq("id", userId);
+      // Optimistic preview
+      setLocalAvatarUrl(URL.createObjectURL(file));
+      router.refresh();
+    } catch (err) {
+      console.error("Avatar upload failed:", err);
+    } finally {
+      setAvatarUploading(false);
+      // Reset so same file can be re-selected
+      if (avatarInputRef.current) avatarInputRef.current.value = "";
+    }
+  }
 
   return (
     <div className="relative mx-auto min-h-0 w-full max-w-5xl flex-1 overflow-y-auto px-4 py-8 pb-16 lg:px-8">
@@ -102,12 +143,41 @@ export function ProfileHub({
 
         <div className="relative flex flex-col gap-8 p-6 sm:flex-row sm:items-end sm:justify-between sm:p-8">
           <div className="flex min-w-0 flex-col gap-5 sm:flex-row sm:items-end">
-            <div
-              className="flex h-20 w-20 shrink-0 items-center justify-center rounded-xl border border-hub-gold/35 bg-hub-bg/60 font-[family-name:var(--font-jetbrains-mono)] text-xl font-bold tracking-tight text-hub-gold shadow-[inset_0_1px_0_rgba(255,255,255,0.06)]"
-              aria-hidden
+            {/* Avatar */}
+            <button
+              type="button"
+              onClick={() => avatarInputRef.current?.click()}
+              disabled={avatarUploading}
+              aria-label="Change profile picture"
+              className="group relative h-20 w-20 shrink-0 overflow-hidden rounded-xl border border-hub-gold/35 bg-hub-bg/60 shadow-[inset_0_1px_0_rgba(255,255,255,0.06)] transition disabled:opacity-60"
             >
-              {initials}
-            </div>
+              {localAvatarUrl ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={localAvatarUrl}
+                  alt="Profile picture"
+                  className="h-full w-full object-cover"
+                />
+              ) : (
+                <span className="flex h-full w-full items-center justify-center font-[family-name:var(--font-jetbrains-mono)] text-xl font-bold tracking-tight text-hub-gold">
+                  {initials}
+                </span>
+              )}
+              <span className="absolute inset-0 flex items-center justify-center rounded-xl bg-black/50 opacity-0 transition group-hover:opacity-100">
+                {avatarUploading ? (
+                  <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
+                ) : (
+                  <Camera className="h-5 w-5 text-white" />
+                )}
+              </span>
+            </button>
+            <input
+              ref={avatarInputRef}
+              type="file"
+              accept="image/*"
+              onChange={handleAvatarChange}
+              className="hidden"
+            />
             <div className="min-w-0">
               <p className="font-[family-name:var(--font-jetbrains-mono)] text-[10px] font-medium uppercase tracking-[0.2em] text-hub-cyan">
                 Your profile
@@ -286,7 +356,22 @@ export function ProfileHub({
               </p>
             </div>
           </div>
+          <button
+            type="button"
+            onClick={() => setVaultModalOpen(true)}
+            className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-hub-cyan/30 bg-hub-cyan/10 px-3 text-xs font-medium text-hub-cyan transition hover:bg-hub-cyan/20"
+          >
+            <Plus className="h-3.5 w-3.5" />
+            Upload file
+          </button>
         </div>
+
+        <VaultUploadModal
+          userId={userId}
+          open={vaultModalOpen}
+          onOpenChange={setVaultModalOpen}
+          onSuccess={() => router.refresh()}
+        />
 
         <ul className="mt-5 grid gap-3 sm:grid-cols-2">
           {vaultItems.length === 0 ? (

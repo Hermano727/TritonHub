@@ -12,7 +12,7 @@ import {
   Star,
   Zap,
 } from "lucide-react";
-import type { ClassDossier, CourseLogistics, DossierEditPatch, EvidenceItem } from "@/types/dossier";
+import type { ClassDossier, CourseLogistics, DossierEditPatch, EvidenceItem, GradeScheme } from "@/types/dossier";
 import { ConflictBadge } from "@/components/dashboard/ConflictBadge";
 import { InlinePencilField } from "@/components/dashboard/InlinePencilField";
 import { getSunsetSummary } from "@/lib/mappers/courseEntryToDossier";
@@ -230,6 +230,19 @@ function rowTotal(rows: GradeRow[]): number {
 }
 
 function parseGradingSchemes(breakdown: string): GradingScheme[] {
+  // Parenthetical alternate: "A, B, C (or X, Y, Z)" — parenthetical must be checked
+  // before comma-splitting so the inner commas aren't treated as row separators.
+  const parenOrMatch = breakdown.match(/^(.+?)\s*\(\s*or\s+(.+)\)\s*$/i);
+  if (parenOrMatch) {
+    const [, mainPart, altPart] = parenOrMatch;
+    if (mainPart.includes("%") && altPart.includes("%")) {
+      return [
+        { label: "Standard", rows: parseGradeRows(mainPart) },
+        { label: "Alternate", rows: parseGradeRows(altPart) },
+      ];
+    }
+  }
+
   // Try explicit OR / pipe / slash separators first
   for (const sep of [/ OR /i, / \| /, / \/ /]) {
     const parts = breakdown.split(sep).map((s) => s.trim()).filter((p) => p.includes("%"));
@@ -296,10 +309,25 @@ function SchemeTable({ rows }: { rows: GradeRow[] }) {
   );
 }
 
-function GradeBreakdownTable({ breakdown }: { breakdown: string | null | undefined }) {
+function GradeBreakdownTable({
+  schemes: structuredSchemes,
+  breakdown,
+}: {
+  schemes?: GradeScheme[] | null;
+  breakdown?: string | null;
+}) {
   const [schemeIdx, setSchemeIdx] = useState(0);
 
-  if (!breakdown) {
+  // Prefer structured schemes from the API; fall back to client-side string parsing
+  // for older cached entries that only have grade_breakdown as a raw string.
+  const schemes: GradingScheme[] =
+    structuredSchemes && structuredSchemes.length > 0
+      ? structuredSchemes
+      : breakdown
+      ? parseGradingSchemes(breakdown)
+      : [];
+
+  if (schemes.length === 0 || schemes.every((s) => s.rows.length === 0)) {
     return (
       <div className="flex items-center gap-1.5 rounded-lg border border-dashed border-white/[0.06] px-3 py-2">
         <Info className="h-3 w-3 shrink-0 text-hub-text-muted/50" />
@@ -308,7 +336,6 @@ function GradeBreakdownTable({ breakdown }: { breakdown: string | null | undefin
     );
   }
 
-  const schemes = parseGradingSchemes(breakdown);
   const displaySchemes = schemes.slice(0, 2);
   const hasMore = schemes.length > 2;
   const isMulti = displaySchemes.length > 1;
@@ -755,7 +782,10 @@ export function ClassCard({
                         />
                       </div>
                     ) : (
-                      <GradeBreakdownTable breakdown={dossier.logistics.grade_breakdown} />
+                      <GradeBreakdownTable
+                          schemes={dossier.logistics.grade_schemes}
+                          breakdown={dossier.logistics.grade_breakdown}
+                        />
                     )
                   )}
 

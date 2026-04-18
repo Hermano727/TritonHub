@@ -1,19 +1,33 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
-import { X } from "lucide-react";
+import { Image as ImageIcon, Paperclip, X } from "lucide-react";
 import { createPost } from "@/lib/api/community";
+import { createClient } from "@/lib/supabase/client";
+import { uploadFile } from "@/lib/storage";
 import type { PostSummary } from "@/types/community";
 
 const GENERAL_TAGS = ["General", "Classes", "Advice"] as const;
+const MAX_IMAGES = 3;
+const MAX_IMAGE_BYTES = 10 * 1_000_000;
+
+type AttachmentState = {
+  file: File;
+  preview: string;
+  path: string | null;
+  uploading: boolean;
+  error: string | null;
+};
 
 type CreatePostModalProps = {
   trigger: React.ReactNode;
   onCreated: (post: PostSummary) => void;
+  userId?: string;
 };
 
-export function CreatePostModal({ trigger, onCreated }: CreatePostModalProps) {
+export function CreatePostModal({ trigger, onCreated, userId }: CreatePostModalProps) {
+  const imageInputRef = useRef<HTMLInputElement>(null);
   const [open, setOpen] = useState(false);
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
@@ -21,6 +35,7 @@ export function CreatePostModal({ trigger, onCreated }: CreatePostModalProps) {
   const [professorName, setProfessorName] = useState("");
   const [isAnonymous, setIsAnonymous] = useState(false);
   const [generalTags, setGeneralTags] = useState<string[]>([]);
+  const [attachments, setAttachments] = useState<AttachmentState[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -37,12 +52,63 @@ export function CreatePostModal({ trigger, onCreated }: CreatePostModalProps) {
     setProfessorName("");
     setIsAnonymous(false);
     setGeneralTags([]);
+    attachments.forEach((a) => URL.revokeObjectURL(a.preview));
+    setAttachments([]);
     setError(null);
+  }
+
+  async function handleImagePick(e: React.ChangeEvent<HTMLInputElement>) {
+    if (!userId) return;
+    const files = Array.from(e.target.files ?? []);
+    if (!files.length) return;
+    const allowed = files.slice(0, MAX_IMAGES - attachments.length);
+    if (imageInputRef.current) imageInputRef.current.value = "";
+
+    const newEntries: AttachmentState[] = allowed.map((file) => ({
+      file,
+      preview: URL.createObjectURL(file),
+      path: null,
+      uploading: true,
+      error: null,
+    }));
+    setAttachments((prev) => [...prev, ...newEntries]);
+
+    // Upload each immediately in background
+    allowed.forEach(async (file, idx) => {
+      const globalIdx = attachments.length + idx;
+      try {
+        const ext = file.name.split(".").pop() ?? "jpg";
+        const storagePath = `${userId}/community/${crypto.randomUUID()}.${ext}`;
+        const path = await uploadFile(storagePath, file, {
+          maxBytes: MAX_IMAGE_BYTES,
+          accept: ["image"],
+        });
+        setAttachments((prev) =>
+          prev.map((a, i) => (i === globalIdx ? { ...a, path, uploading: false } : a)),
+        );
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : "Upload failed";
+        setAttachments((prev) =>
+          prev.map((a, i) => (i === globalIdx ? { ...a, uploading: false, error: msg } : a)),
+        );
+      }
+    });
+  }
+
+  function removeAttachment(idx: number) {
+    setAttachments((prev) => {
+      URL.revokeObjectURL(prev[idx].preview);
+      return prev.filter((_, i) => i !== idx);
+    });
   }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!title.trim() || !body.trim()) return;
+    if (attachments.some((a) => a.uploading)) {
+      setError("Images are still uploading, please wait.");
+      return;
+    }
     setLoading(true);
     setError(null);
     try {
@@ -54,6 +120,23 @@ export function CreatePostModal({ trigger, onCreated }: CreatePostModalProps) {
         isAnonymous,
         generalTags,
       });
+
+      // Insert attachment rows directly via Supabase (RLS handles auth)
+      const readyAttachments = attachments.filter((a) => a.path && !a.error);
+      if (readyAttachments.length > 0 && userId) {
+        const supabase = createClient();
+        await supabase.from("community_post_attachments").insert(
+          readyAttachments.map((a) => ({
+            post_id: post.id,
+            user_id: userId,
+            storage_path: a.path!,
+            name: a.file.name,
+            mime_type: a.file.type,
+            size_bytes: a.file.size,
+          })),
+        );
+      }
+
       onCreated(post);
       setOpen(false);
       reset();
@@ -170,6 +253,81 @@ export function CreatePostModal({ trigger, onCreated }: CreatePostModalProps) {
                 className="w-full resize-none rounded-lg border border-white/[0.08] bg-hub-bg/80 px-3 py-2.5 text-sm text-hub-text outline-none ring-hub-cyan/40 placeholder:text-hub-text-muted focus:border-hub-cyan/40 focus:ring-2"
               />
             </div>
+
+            {/* Image attachments */}
+            {userId && (
+              <div>
+                <div className="mb-2 flex items-center justify-between">
+                  <label className="text-xs font-medium text-hub-text-secondary">
+                    Images <span className="text-hub-text-muted">(optional · up to {MAX_IMAGES})</span>
+                  </label>
+                  {attachments.length < MAX_IMAGES && (
+                    <button
+                      type="button"
+                      onClick={() => imageInputRef.current?.click()}
+                      className="inline-flex items-center gap-1 rounded-md border border-white/[0.08] px-2 py-1 text-[11px] text-hub-text-muted transition hover:border-white/[0.18] hover:text-hub-text"
+                    >
+                      <Paperclip className="h-3 w-3" />
+                      Attach
+                    </button>
+                  )}
+                </div>
+                <input
+                  ref={imageInputRef}
+                  type="file"
+                  accept="image/*"
+                  multiple
+                  onChange={handleImagePick}
+                  className="hidden"
+                />
+                {attachments.length > 0 && (
+                  <div className="flex flex-wrap gap-2">
+                    {attachments.map((att, i) => (
+                      <div key={att.preview} className="relative">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                          src={att.preview}
+                          alt={att.file.name}
+                          className={`h-20 w-20 rounded-lg object-cover border transition ${
+                            att.error
+                              ? "border-hub-danger/50 opacity-60"
+                              : att.uploading
+                              ? "border-white/[0.08] opacity-60"
+                              : "border-hub-cyan/30"
+                          }`}
+                        />
+                        {att.uploading && (
+                          <span className="absolute inset-0 flex items-center justify-center rounded-lg bg-black/40">
+                            <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
+                          </span>
+                        )}
+                        {att.error && (
+                          <span className="absolute bottom-1 left-1 right-1 truncate rounded bg-hub-danger/80 px-1 text-[9px] text-white">
+                            {att.error}
+                          </span>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => removeAttachment(i)}
+                          className="absolute -right-1.5 -top-1.5 flex h-4 w-4 items-center justify-center rounded-full bg-hub-bg border border-white/[0.12] text-hub-text-muted transition hover:text-hub-danger"
+                        >
+                          <X className="h-2.5 w-2.5" />
+                        </button>
+                      </div>
+                    ))}
+                    {attachments.length < MAX_IMAGES && (
+                      <button
+                        type="button"
+                        onClick={() => imageInputRef.current?.click()}
+                        className="flex h-20 w-20 items-center justify-center rounded-lg border border-dashed border-white/[0.12] text-hub-text-muted transition hover:border-hub-cyan/30 hover:text-hub-cyan"
+                      >
+                        <ImageIcon className="h-5 w-5" />
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* Anonymous toggle */}
             <label className="flex cursor-pointer items-center justify-between rounded-lg border border-white/[0.06] bg-hub-bg/40 px-3 py-2.5">

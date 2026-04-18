@@ -33,8 +33,18 @@ export interface ReplyOut {
   userHasDownvoted: boolean;
 }
 
+export interface PostAttachment {
+  id: string;
+  storagePath: string;
+  name: string;
+  mimeType: string;
+  sizeBytes: number;
+  signedUrl?: string;
+}
+
 export interface PostDetail extends PostSummary {
   replies: ReplyOut[];
+  attachments?: PostAttachment[];
 }
 
 export interface PostListResponse {
@@ -51,6 +61,7 @@ export interface CreatePostPayload {
   professorName?: string;
   isAnonymous?: boolean;
   generalTags?: string[];
+  attachmentPaths?: string[];
 }
 
 export interface CreateReplyPayload {

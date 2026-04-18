@@ -26,7 +26,9 @@ export interface QuarterRef {
 export interface VaultItem {
   id: string;
   name: string;
-  kind: "syllabus" | "webreg" | "note";
+  kind: "syllabus" | "webreg" | "note" | "pdf" | "image" | "doc";
+  mimeType?: string | null;
+  sizeBytes?: number | null;
   updatedAt: string;
 }
 
@@ -105,9 +107,20 @@ export interface SunsetGradeDistribution {
   source_course_code?: string | null;
 }
 
+export interface GradeRow {
+  component: string;
+  weight: string;
+}
+
+export interface GradeScheme {
+  label: string | null;
+  rows: GradeRow[];
+}
+
 export interface CourseLogistics {
   attendance_required: boolean | null;
   grade_breakdown: string | null;
+  grade_schemes?: GradeScheme[] | null;
   course_webpage_url: string | null;
   textbook_required: boolean | null;
   podcasts_available: boolean | null;

@@ -37,7 +37,7 @@ export default async function ProfilePage() {
   ] = await Promise.all([
     supabase
       .from("profiles")
-      .select("display_name, college, expected_grad_term")
+      .select("display_name, college, expected_grad_term, avatar_url")
       .eq("id", user.id)
       .maybeSingle(),
     supabase
@@ -47,7 +47,7 @@ export default async function ProfilePage() {
       .order("updated_at", { ascending: false }),
     supabase
       .from("vault_items")
-      .select("id, name, kind, updated_at")
+      .select("id, name, kind, mime_type, size_bytes, updated_at")
       .eq("user_id", user.id)
       .order("updated_at", { ascending: false }),
     supabase
@@ -64,17 +64,31 @@ export default async function ProfilePage() {
       "id" | "title" | "quarter_label" | "status" | "updated_at"
     >[]) ?? [];
 
+  // Signed URL for avatar (1-year expiry; regenerated on each page load)
+  let avatarSignedUrl: string | null = null;
+  const rawAvatarUrl = (profile as { avatar_url?: string | null } | null)?.avatar_url;
+  if (rawAvatarUrl) {
+    const { data: signed } = await supabase.storage
+      .from("user-content")
+      .createSignedUrl(rawAvatarUrl, 60 * 60 * 24 * 365);
+    avatarSignedUrl = signed?.signedUrl ?? null;
+  }
+
   const vaultFromDb =
     (vaultRaw as {
       id: string;
       name: string;
       kind: VaultItem["kind"];
+      mime_type: string | null;
+      size_bytes: number | null;
       updated_at: string;
     }[] | null) ?? [];
   const vaultItems: VaultItem[] = vaultFromDb.map((row) => ({
     id: row.id,
     name: row.name,
     kind: row.kind,
+    mimeType: row.mime_type ?? null,
+    sizeBytes: row.size_bytes ?? null,
     updatedAt: formatUpdatedAt(row.updated_at),
   }));
 
@@ -106,10 +120,12 @@ export default async function ProfilePage() {
 
   return (
     <ProfileHub
+      userId={user.id}
       displayName={displayName}
       email={email}
       college={profile?.college ?? null}
       expectedGrad={profile?.expected_grad_term ?? null}
+      avatarUrl={avatarSignedUrl}
       plans={plans}
       quarters={quarters}
       vaultItems={vaultItems}

@@ -21,9 +21,10 @@ import { PostCard } from "./PostCard";
 type CommunityHubProps = {
   initialPosts: PostSummary[];
   initialTotal: number;
+  userId: string;
 };
 
-export function CommunityHub({ initialPosts, initialTotal }: CommunityHubProps) {
+export function CommunityHub({ initialPosts, initialTotal, userId }: CommunityHubProps) {
   const [posts, setPosts] = useState<PostSummary[]>(initialPosts);
   const [total, setTotal] = useState(initialTotal);
   const [page, setPage] = useState(1);
@@ -151,6 +152,7 @@ export function CommunityHub({ initialPosts, initialTotal }: CommunityHubProps) 
             </button>
           }
           onCreated={handlePostCreated}
+          userId={userId}
         />
       </div>
 

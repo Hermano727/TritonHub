@@ -43,5 +43,5 @@ export default async function CommunityPage() {
     userHasDownvoted: (row.user_has_downvoted as boolean) ?? false,
   }));
 
-  return <CommunityHub initialPosts={posts} initialTotal={count ?? 0} />;
+  return <CommunityHub initialPosts={posts} initialTotal={count ?? 0} userId={user.id} />;
 }

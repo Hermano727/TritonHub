@@ -591,7 +591,7 @@ export const DossierScheduleWorkspace = forwardRef(function DossierScheduleWorks
         <div ref={calendarRef} className={mainTab === "dossier" ? "hidden" : ""}>
           {calendarNode(78, calendarHeaderActions ? <>{defaultCalendarActions}{calendarHeaderActions}</> : defaultCalendarActions)}
         </div>
-        <div className={`grid gap-4 sm:grid-cols-2 ${mainTab === "schedule" ? "hidden" : ""}`}>
+        <div className={`grid gap-4 items-start sm:grid-cols-2 ${mainTab === "schedule" ? "hidden" : ""}`}>
           {classes.map((c, idx) => (
             <ClassCard
               key={`${c.id}:${idx}`} dossier={c}
@@ -737,7 +737,7 @@ export const DossierScheduleWorkspace = forwardRef(function DossierScheduleWorks
             transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
           >
             <div
-              className={`grid gap-8 ${
+              className={`grid gap-8 items-start ${
                 classes.length <= 2 ? "grid-cols-2" :
                 classes.length === 3 ? "grid-cols-3" :
                 "grid-cols-2 xl:grid-cols-3"
@@ -892,7 +892,7 @@ export const DossierScheduleWorkspace = forwardRef(function DossierScheduleWorks
                 onGoToCourses={() => setCurrentPhase("dossiers")}
                 onOpenCalendar={openCalendar}
               />
-              <div className={`grid gap-6 ${classes.length <= 2 ? "grid-cols-2" : "grid-cols-2 xl:grid-cols-3"}`}>
+              <div className={`grid gap-6 items-start ${classes.length <= 2 ? "grid-cols-2" : "grid-cols-2 xl:grid-cols-3"}`}>
                 {classes.map((c, idx) => (
                   <ClassCard
                     key={`${c.id}:${idx}`} dossier={c}

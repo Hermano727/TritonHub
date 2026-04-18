@@ -1,7 +1,7 @@
 import { notFound, redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { ThreadView } from "@/components/community/ThreadView";
-import type { PostDetail, ReplyOut } from "@/types/community";
+import type { PostAttachment, PostDetail, ReplyOut } from "@/types/community";
 
 type Props = {
   params: Promise<{ postId: string }>;
@@ -29,11 +29,18 @@ export default async function ThreadPage({ params }: Props) {
     notFound();
   }
 
-  const { data: rawReplies } = await supabase
-    .from("community_replies_with_author")
-    .select("*")
-    .eq("post_id", postId)
-    .order("created_at", { ascending: true });
+  const [{ data: rawReplies }, { data: rawAttachments }] = await Promise.all([
+    supabase
+      .from("community_replies_with_author")
+      .select("*")
+      .eq("post_id", postId)
+      .order("created_at", { ascending: true }),
+    supabase
+      .from("community_post_attachments")
+      .select("id, storage_path, name, mime_type, size_bytes")
+      .eq("post_id", postId)
+      .order("created_at", { ascending: true }),
+  ]);
 
   const replies: ReplyOut[] = (rawReplies ?? []).map((row) => ({
     id: row.id as string,
@@ -50,6 +57,23 @@ export default async function ThreadPage({ params }: Props) {
     userHasUpvoted: (row.user_has_upvoted as boolean) ?? false,
     userHasDownvoted: (row.user_has_downvoted as boolean) ?? false,
   }));
+
+  // Generate signed URLs for attachments (1-hour validity)
+  const attachments: PostAttachment[] = await Promise.all(
+    (rawAttachments ?? []).map(async (row) => {
+      const { data: signed } = await supabase.storage
+        .from("user-content")
+        .createSignedUrl(row.storage_path as string, 3600);
+      return {
+        id: row.id as string,
+        storagePath: row.storage_path as string,
+        name: row.name as string,
+        mimeType: row.mime_type as string,
+        sizeBytes: row.size_bytes as number,
+        signedUrl: signed?.signedUrl ?? undefined,
+      };
+    }),
+  );
 
   const post: PostDetail = {
     id: rawPost.id as string,
@@ -69,6 +93,7 @@ export default async function ThreadPage({ params }: Props) {
     userHasUpvoted: (rawPost.user_has_upvoted as boolean) ?? false,
     userHasDownvoted: (rawPost.user_has_downvoted as boolean) ?? false,
     replies,
+    attachments,
   };
 
   return <ThreadView post={post} />;

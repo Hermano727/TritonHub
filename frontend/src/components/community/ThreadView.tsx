@@ -121,6 +121,40 @@ export function ThreadView({ post }: ThreadViewProps) {
         <h1 className="mb-4 text-2xl font-bold text-hub-text">{post.title}</h1>
         <MarkdownBody>{post.body}</MarkdownBody>
 
+        {/* Attached images */}
+        {post.attachments && post.attachments.length > 0 && (
+          <div className="mt-4 flex flex-wrap gap-3">
+            {post.attachments.map((att) =>
+              att.signedUrl && att.mimeType.startsWith("image/") ? (
+                <a
+                  key={att.id}
+                  href={att.signedUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="block overflow-hidden rounded-lg border border-white/[0.08] transition hover:border-hub-cyan/30"
+                >
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={att.signedUrl}
+                    alt={att.name}
+                    className="max-h-72 max-w-xs object-contain"
+                  />
+                </a>
+              ) : att.signedUrl ? (
+                <a
+                  key={att.id}
+                  href={att.signedUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-2 rounded-lg border border-white/[0.08] bg-hub-surface/50 px-3 py-2 text-xs text-hub-text-secondary transition hover:border-hub-cyan/30 hover:text-hub-text"
+                >
+                  {att.name}
+                </a>
+              ) : null,
+            )}
+          </div>
+        )}
+
         {/* Author row + votes */}
         <div className="mt-5 flex items-center gap-2.5">
           <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-hub-cyan/20 text-xs font-semibold text-hub-cyan">
